@@ -10,7 +10,7 @@
 
 ## Aplicaciones
 
-El sistema se compone de tres tipos de aplicaciones, Passengers los cuales solicitan viajes, Drivers los cuales aceptan y concretan esos viajes y Posnet el cual controla el pago del viaje.
+El sistema se compone de tres tipos de aplicaciones, Passengers los cuales solicitan viajes, Drivers los cuales aceptan y concretan esos viajes y Payment el cual controla el pago del viaje.
 
 ![arquitectura](assets/arq_actores.png)
 
@@ -18,7 +18,7 @@ Como podemos ver en este diagrama, el pedido de los viajes lo recibe el driver 1
 
 Los passenger por lo tanto, envian viajes al Driver lider esperando un mensaje confirmando un viaje, y su finalizacion o en caso contrario, un mensaje de error
 
-El PosNet se conectara con cada Passenger esperando autorizacion de pago por parte del mismo y cobrando la cantidad indicada luego de finalizar el viaje.
+El Payment se conectara con cada Passenger esperando autorizacion de pago por parte del mismo y con cada Driver esperando confirmacion de llegada a destino cobrando asi, la cantidad indicada luego de finalizar el viaje.
 
 ### Driver
 
@@ -26,11 +26,11 @@ El PosNet se conectara con cada Passenger esperando autorizacion de pago por par
 
 Dentro del proceso Driver encontramos los actores:
 
--   HandleDriveDriver: Se responsabiliza en concretar la logica del viaje
+-   HandleTrip: Se responsabiliza en concretar la logica del viaje
 
--   CentralDriver: Se responsabiliza en orquestar los mensajes recibidos de los diversos actores con los cuales se comunica a estos mismos actores
+-   CentralDriver: Se responsabiliza en orquestar los mensajes recibidos de los diversos actores con los cuales se comunica a estos mismos actores y de asignar el conductor al pasajero. En caso de que sea necesario se encargara de seleccionar un nuevo lider.
 
--   DriverToDriverConnection: Se responsabiliza de las comunicaciones mediante sockets con los demas Drivers, hay una instancia de este actor por cada Driver que exista
+-   DriverToDriverConnection: Se responsabiliza de las comunicaciones mediante sockets con los demas Drivers, hay una instancia de este actor por cada Driver que exista.
 
 -   DriverToPassengerConnection: Se responsabiliza de las comunicaciones mediante sockets con el Passenger actual
 
@@ -44,16 +44,22 @@ Dentro del proceso Passenger encontramos los actores:
 
 -   PassengerToDriverConnection: Le envia un mensaje al Driver lider comunicando los datos del viaje que el Passenger quiere iniciar
 
--   HandleDriverResponse: Se encarga de contemplar la respuesta recibida por parte del Driver
+-   HandleDriverResponse: Se encarga de contemplar la respuesta recibida por parte del Driver. En caso de error, ya sea que no se tomo el viaje o que ocurrio algun otro tipo de error, no se comunicara la intencion de cobro al PassengerToPaymentConnection.
 
--   PassengerToPosnetConnection: Le envia un mensaje al Posnet comunicando que el viaje finalizo con exito
+-   PassengerToPaymentConnection: Le envia un mensaje al Payment comunicando que el passenger esta en condiciones de pagar
 
-### PosNet
+### Payment
 
-![posnet](assets/ei_posnet.png)
+![payment](assets/ei_payment.png)
 
-Dentro del proceso Posnet encontramos los actores:
+Dentro del proceso Payment encontramos los actores:
 
--   PosnetToPassengerConnection: Se comunica con el Passenger mediante sockets TCP
+-   PaymentToPassengerConnection: Se comunica con el Passenger mediante sockets TCP
 
--   HandlePayment: Maneja los mensajes recibidos por parte del Passenger, ya sea autorizar un pago o cobrar el monto despues de terminar el viaje.
+-   PaymentToDriverConnection: Se comunica con el Driver mediante sockets TCP
+
+-   HandlePayment: Maneja los mensajes recibidos, ya sea autorizar un pago o cobrar el monto despues de terminar el viaje.
+
+## Como se selecciona un Driver
+
+El lider al recibir un nuevo viaje, enviara a cada Driver (incluido el mismo) la ubicacion actual del pasajero que solicito el servicio, y estos responderan en caso de poder / querer tomar el viaje con su distancia hacia el pasajero, en caso contrario, responderan **-1** por defecto siendo este valor un indicativo de que no tomaran este viaje. Luego, con todas las distancias recolectadas, se elegira al conductor con la menor distancia valida para que tome el viaje.
