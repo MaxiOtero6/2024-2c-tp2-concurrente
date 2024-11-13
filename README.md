@@ -34,6 +34,34 @@ Dentro del proceso Driver encontramos los actores:
 
 -   DriverToPassengerConnection: Se responsabiliza de las comunicaciones mediante sockets con el Passenger actual
 
+Estructura aproximada del Central Driver:
+
+```Rust
+struct CentralDriver {
+  trip_handler: Addr<TripHandler>,
+  connection_with_passenger: Addr<PassengerConnection>,
+  connection_with_payment: Addr<PaymentConnection>,
+  connection_with_drivers: Vec<Addr<DriverConnection>>, // 0...N
+  current_location: (u32, u32),
+}
+
+impl Actor for CentralDriver {
+    type Context = Context<Self>;
+}
+
+#[derive(Message)]
+#[rtype(result = i64)]
+struct TripRequest {
+  passenger_location: (u32, u32),
+}
+
+#[derive(Message)]
+#[rtype(result = i64)]
+struct TripStart {
+  distance_to_destination: u32,
+}
+```
+
 ### Passenger
 
 ![passenger](assets/ei_passenger.png)
@@ -48,6 +76,31 @@ Dentro del proceso Passenger encontramos los actores:
 
 -   PassengerToPaymentConnection: Le envia un mensaje al Payment comunicando que el passenger esta en condiciones de pagar
 
+Estructura aproximada del HandleDriverResponse:
+
+```Rust
+struct HandleDriverResponse {
+    connection_with_payment: Addr<PaymentConnection>,
+}
+
+impl Actor for HandleDriverResponse {
+    type Context = Context<Self>;
+}
+
+#[derive(Message)]
+#[rtype(result = "String")]
+struct VerifyPaymentMethod {
+  card_number: str,
+  cvv: str,
+}
+
+#[derive(Message)]
+#[rtype(result = "String")]
+struct PaymentRequest {
+  amount_to_charge: f64,
+}
+```
+
 ### Payment
 
 ![payment](assets/ei_payment.png)
@@ -59,6 +112,19 @@ Dentro del proceso Payment encontramos los actores:
 -   PaymentToDriverConnection: Se comunica con el Driver mediante sockets TCP
 
 -   HandlePayment: Maneja los mensajes recibidos, ya sea autorizar un pago o cobrar el monto despues de terminar el viaje.
+
+Estructura aproximada del Payment:
+
+```Rust
+struct PaymentHandler {
+  driver_conection: Addr<DriverPaymentConnection>,
+  connection_with_passenger: Addr<PassengerPaymentConnection>,
+}
+
+impl Actor for PaymentHandler {
+    type Context = Context<Self>;
+}
+```
 
 ## Como se selecciona un Driver
 
