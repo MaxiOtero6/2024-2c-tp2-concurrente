@@ -145,26 +145,25 @@ donde $\mathbf{p} = (p_1, p_2, ..., p_n) \text{ y } \mathbf{q} = (q_1, q_2, ...,
 
 Ejemplo:
 
-- Se solicita un nuevo viaje en la posicion (1, 2) hasta (10, 20)
+-   Se solicita un nuevo viaje en la posicion (1, 2) hasta (10, 20)
 
 El lider recibe (1, 2) hasta (10, 20), en un instante previo, los Driver le comunicaron:
 
- - Driver 1: (3, 5)
- - Driver 2: (6, 1)
- - Driver 3: (-1, -1) // Ocupado
+-   Driver 1: (3, 5)
+-   Driver 2: (6, 1)
+-   Driver 3: (-1, -1) // Ocupado
 
 Primero, el lider descartara del calculo a los Drivers que esten ocupados
 
- - Driver 1: (3, 5)
- - Driver 2: (6, 1)
+-   Driver 1: (3, 5)
+-   Driver 2: (6, 1)
 
 Luego, calculara la distancia a (1, 2) usando la distancia Manhattan
 
- - Driver 1: |1 - 3| + |2 - 5| = 5
- - Driver 2: |1 - 6| + |2 - 1| = 6
+-   Driver 1: |1 - 3| + |2 - 5| = 5
+-   Driver 2: |1 - 6| + |2 - 1| = 6
 
 Quendando asi, encargado del viaje el Driver 1
-
 
 ## Conexiones
 
@@ -177,3 +176,16 @@ Se utilizaran sockets TCP, con los puertos definidos de la siguiente forma:
 
 Planteamos que el Driver que ejerza de lider debe tener un listener escuchando en el puerto 8080.
 Esto con el fin de que sea transparente para el pasajero el saber a donde comunicarse para iniciar un viaje.
+
+## Threads
+
+### Driver
+
+![driver_threads](assets/driver_threads.png)
+
+Lo que podemos ver en este diagrama, es un Driver que casualmente es el lider.
+En este caso, el driver va a tener un thread 'leader' el cual va a ser responsable de handlear nuevas request de viajes.
+Estas requests las va a recibir mediante un listener y va a pasar los datos recibidos incluyendo el stream
+y su direccion a un thread pool en el cual la finalidad de las tareas ingresadas a este pool sera seleccionar el
+Driver mas acorde para el viaje y comunicarle al pasajero que su viaje se puede realizar,
+o no en caso de que no haya un Driver disponible.
