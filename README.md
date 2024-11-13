@@ -37,11 +37,19 @@ Estructura aproximada del Central Driver:
 
 ```Rust
 struct CentralDriver {
-  trip_handler: Addr<TripHandler>,
-  connection_with_passenger: Addr<PassengerConnection>,
-  connection_with_payment: Addr<PaymentConnection>,
-  connection_with_drivers: Vec<Addr<DriverConnection>>, // 0...N
-  current_location: (u32, u32),
+    // Direccion del actor TripHandler
+    trip_handler: Addr<TripHandler>,
+    // Direccion del actor PassengerConnection
+    connection_with_passenger: Addr<PassengerConnection>,
+    // Direccion del actor PaymentConnection
+    connection_with_payment: Addr<PaymentConnection>,
+    // Direcciones de los drivers segun su id
+    connection_with_drivers: HashMap<u32, Addr<DriverConnection>>, // 0...N
+    // Posicion actual del driver
+    current_location: (u32, u32)
+    // Posiciones de los demas drivers segun su id,
+    // cobra sentido si este driver es lider
+    driver_positions: Arc<RwLock<HashMap<u32, (u32, u32)>>>,
 }
 
 impl Actor for CentralDriver {
@@ -50,14 +58,73 @@ impl Actor for CentralDriver {
 
 #[derive(Message)]
 #[rtype(result = i64)]
-struct TripRequest {
-  passenger_location: (u32, u32),
+struct InfoPosition {
+  driver_location: (u32, u32),
 }
 
 #[derive(Message)]
-#[rtype(result = i64)]
+#[rtype(result = String)]
 struct TripStart {
-  distance_to_destination: u32,
+  passenger_id: u32
+  passenger_location: (u32, u32)
+  destination: (u32, u32)
+}
+```
+
+```Rust
+struct TripHandler {
+    // Direccion del actor CentralDriver
+    central_driver: Addr<CentralDriver>,
+}
+
+impl Actor for TripHandler {
+    type Context = Context<Self>;
+}
+```
+
+```Rust
+struct PassengerConnection {
+    // Direccion del actor CentralDriver
+    central_driver: Addr<CentralDriver>,
+    // Stream para enviar al passenger
+    passenger_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
+    // Direccion del stream del passenger
+    passenger_addr: Option<SocketAddr>,
+
+}
+
+impl Actor for PassengerConnection {
+    type Context = Context<Self>;
+}
+```
+
+```Rust
+struct PaymentConnection {
+    // Direccion del actor CentralDriver
+    central_driver: Addr<CentralDriver>,
+    // Stream para enviar al payment
+    payment_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
+    // Direccion del stream del payment
+    payment_addr: Option<SocketAddr>,
+}
+
+impl Actor for PaymentConnection {
+    type Context = Context<Self>;
+}
+```
+
+```Rust
+struct DriverConnection {
+    // Direccion del actor CentralDriver
+    central_driver: Addr<CentralDriver>,
+    // Stream para enviar al driver
+    driver_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
+    // Direccion del stream del driver
+    driver_addr: Option<SocketAddr>,
+}
+
+impl Actor for DriverConnection {
+    type Context = Context<Self>;
 }
 ```
 
@@ -78,8 +145,41 @@ Dentro del proceso Passenger encontramos los actores:
 Estructura aproximada del HandleDriverResponse:
 
 ```Rust
+struct HandleDrivePassenger {
+    // ID del passenger
+    id: u32,
+    // Posicion inicial del passenger
+    passenger_position: (u32, u32),
+    // Posicion destino del passenger
+    destination: (u32, u32),
+}
+
+impl Actor for HandleDrivePassenger {
+    type Context = Context<Self>;
+}
+```
+
+```Rust
+struct PassengerToDriverConnection {
+    // ID del passenger
+    id: u32,
+    // Stream para enviar al driver
+    driver_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
+    // Direccion del stream del driver
+    driver_addr: Option<SocketAddr>,
+}
+
+impl Actor for PassengerToDriverConnection {
+    type Context = Context<Self>;
+}
+```
+
+```Rust
 struct HandleDriverResponse {
-    connection_with_payment: Addr<PaymentConnection>,
+    // ID del passenger
+    id: u32,
+    // Respuesta del driver
+    response: String
 }
 
 impl Actor for HandleDriverResponse {
@@ -100,6 +200,21 @@ struct PaymentRequest {
 }
 ```
 
+```Rust
+struct PaymentConnection {
+    // ID del passenger
+    id: u32,
+    // Stream para enviar al payment
+    payment_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
+    // Direccion del stream del payment
+    payment_addr: Option<SocketAddr>
+}
+
+impl Actor for PaymentConnection {
+    type Context = Context<Self>;
+}
+```
+
 ### Payment
 
 ![payment](assets/ei_payment.png)
@@ -116,11 +231,43 @@ Estructura aproximada del Payment:
 
 ```Rust
 struct PaymentHandler {
+  // Direccion al actor DriverPaymentConnection
   driver_conection: Addr<DriverPaymentConnection>,
+  // Direccion al actor PassengerPaymentConnection
   connection_with_passenger: Addr<PassengerPaymentConnection>,
 }
 
 impl Actor for PaymentHandler {
+    type Context = Context<Self>;
+}
+```
+
+```Rust
+struct DriverPaymentConnection {
+    // Stream para enviar al driver
+    driver_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>
+    // Direccion del stream del driver
+    driver_addr: Option<SocketAddr>
+    // Direccion del actor PaymentHandler
+    payment: Addr<PaymentHandler>
+}
+
+impl Actor for DriverPaymentConnection {
+    type Context = Context<Self>;
+}
+```
+
+```Rust
+struct PassengerPaymentConnection {
+    // Stream para enviar al passenger
+    passenger_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>
+    // Direccion del stream del passenger
+    passenger_addr: Option<SocketAddr>
+    // Direccion del actor PaymentHandler
+    payment: Addr<PaymentHandler>
+}
+
+impl Actor for PassengerPaymentConnection {
     type Context = Context<Self>;
 }
 ```
