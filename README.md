@@ -128,7 +128,44 @@ impl Actor for PaymentHandler {
 
 ## Como se selecciona un Driver
 
-El lider al recibir un nuevo viaje, enviara a cada Driver (incluido el mismo) la ubicacion actual del pasajero que solicito el servicio, y estos responderan en caso de poder / querer tomar el viaje con su distancia hacia el pasajero, en caso contrario, responderan **-1** por defecto siendo este valor un indicativo de que no tomaran este viaje. Luego, con todas las distancias recolectadas, se elegira al conductor con la menor distancia valida para que tome el viaje.
+Los Driver deben comunicar periodicamente al lider su posicion, el valor de esta posicion puede ser
+su posicion actual real o una posicion invalida como **(-1, -1)** la cual el lider entendera que este
+conductor se encuentra ocupado.
+
+El lider al recibir un nuevo viaje, utilizara la ubicacion
+actual del pasajero que solicito el servicio para calcular la distancia entre el pasajero y cada
+conductor que tenga registrado, filtrando los conductores que tengan posiciones invalidas.
+Luego, con todas las distancias recolectadas, se elegira al conductor con la menor distancia
+para que tome el viaje.
+
+Para calcular las distancias se utilizara la distancia Manhattan (o metrica del taxista / taxicab)
+
+$d_1(\mathbf{p}, \mathbf{q}) = ||\mathbf{p} - \mathbf{q}||_1 = \sum_{i=1}^{n} |p_i - q_i|$
+
+donde $\mathbf{p} = (p_1, p_2, ..., p_n) \text{ y } \mathbf{q} = (q_1, q_2, ..., q_n)$ son vectores
+
+Ejemplo:
+
+- Se solicita un nuevo viaje en la posicion (1, 2) hasta (10, 20)
+
+El lider recibe (1, 2) hasta (10, 20), en un instante previo, los Driver le comunicaron:
+
+ - Driver 1: (3, 5)
+ - Driver 2: (6, 1)
+ - Driver 3: (-1, -1) // Ocupado
+
+Primero, el lider descartara del calculo a los Drivers que esten ocupados
+
+ - Driver 1: (3, 5)
+ - Driver 2: (6, 1)
+
+Luego, calculara la distancia a (1, 2) usando la distancia Manhattan
+
+ - Driver 1: |1 - 3| + |2 - 5| = 5
+ - Driver 2: |1 - 6| + |2 - 1| = 6
+
+Quendando asi, encargado del viaje el Driver 1
+
 
 ## Conexiones
 
