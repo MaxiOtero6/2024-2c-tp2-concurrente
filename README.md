@@ -145,7 +145,7 @@ impl Actor for DriverConnection {
 #[rtype(result = "u32")]
 struct LeaderStatus {
     type: String,
-    ids: String
+    ids: u32[]
 }
 ```
 
