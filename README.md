@@ -129,3 +129,15 @@ impl Actor for PaymentHandler {
 ## Como se selecciona un Driver
 
 El lider al recibir un nuevo viaje, enviara a cada Driver (incluido el mismo) la ubicacion actual del pasajero que solicito el servicio, y estos responderan en caso de poder / querer tomar el viaje con su distancia hacia el pasajero, en caso contrario, responderan **-1** por defecto siendo este valor un indicativo de que no tomaran este viaje. Luego, con todas las distancias recolectadas, se elegira al conductor con la menor distancia valida para que tome el viaje.
+
+## Conexiones
+
+Se utilizaran sockets TCP, con los puertos definidos de la siguiente forma:
+
+-   $Passenger \in [8000, 8020]$
+-   DriverLeader: 8080
+-   $Passenger \in [8081, 8101]$
+-   Payment: 3000
+
+Planteamos que el Driver que ejerza de lider debe tener un listener escuchando en el puerto 8080.
+Esto con el fin de que sea transparente para el pasajero el saber a donde comunicarse para iniciar un viaje.
