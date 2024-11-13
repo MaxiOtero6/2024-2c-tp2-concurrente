@@ -57,18 +57,11 @@ impl Actor for CentralDriver {
 }
 
 #[derive(Message)]
-#[rtype(result = i64)]
+#[rtype(result = "()")]
 struct InfoPosition {
   driver_location: (u32, u32),
 }
 
-#[derive(Message)]
-#[rtype(result = String)]
-struct TripStart {
-  passenger_id: u32
-  passenger_location: (u32, u32)
-  destination: (u32, u32)
-}
 ```
 
 ```Rust
@@ -79,6 +72,14 @@ struct TripHandler {
 
 impl Actor for TripHandler {
     type Context = Context<Self>;
+}
+
+#[derive(Message)]
+#[rtype(result = String)]
+struct TripStart {
+  passenger_id: u32
+  passenger_location: (u32, u32)
+  destination: (u32, u32)
 }
 ```
 
@@ -96,6 +97,13 @@ struct PassengerConnection {
 impl Actor for PassengerConnection {
     type Context = Context<Self>;
 }
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct TripStatus {
+    log: String
+    type: String
+}
 ```
 
 ```Rust
@@ -111,6 +119,12 @@ struct PaymentConnection {
 impl Actor for PaymentConnection {
     type Context = Context<Self>;
 }
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct CollectMoneyPassenger {
+    passenger_id: u32
+}
 ```
 
 ```Rust
@@ -125,6 +139,13 @@ struct DriverConnection {
 
 impl Actor for DriverConnection {
     type Context = Context<Self>;
+}
+
+#[derive(Message)]
+#[rtype(result = "u32")]
+struct LeaderStatus {
+    type: String,
+    ids: String
 }
 ```
 
@@ -172,6 +193,13 @@ struct PassengerToDriverConnection {
 impl Actor for PassengerToDriverConnection {
     type Context = Context<Self>;
 }
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SendTrip {
+    passenger_position: (u32, u32),
+    destination: (u32, u32)
+}
 ```
 
 ```Rust
@@ -187,16 +215,10 @@ impl Actor for HandleDriverResponse {
 }
 
 #[derive(Message)]
-#[rtype(result = "String")]
-struct VerifyPaymentMethod {
-  card_number: str,
-  cvv: str,
-}
-
-#[derive(Message)]
-#[rtype(result = "String")]
-struct PaymentRequest {
-  amount_to_charge: f64,
+#[rtype(result = "()")]
+struct HandleResponse {
+  type: String,
+  data: String
 }
 ```
 
@@ -212,6 +234,12 @@ struct PaymentConnection {
 
 impl Actor for PaymentConnection {
     type Context = Context<Self>;
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct PaymentRequest {
+  amount_to_charge: f64,
 }
 ```
 
@@ -239,6 +267,11 @@ struct PaymentHandler {
 
 impl Actor for PaymentHandler {
     type Context = Context<Self>;
+}
+
+#[rtype(result = "String")]
+struct AllowPayment {
+  passenger_id: u32
 }
 ```
 
