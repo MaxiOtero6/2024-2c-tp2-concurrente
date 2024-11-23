@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+actix = "0.13.5"
+actix-rt = "2.10.0"
+actix_async_handler = "0.1.0"
+tokio = "1.41.1"
+tokio-stream = "0.1.16"
