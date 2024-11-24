@@ -21,6 +21,20 @@ impl Actor for PassengerConnection {
     type Context = Context<Self>;
 }
 
+impl PassengerConnection {
+    pub fn new(
+        central_driver: Addr<CentralDriver>,
+        write_stream: WriteHalf<TcpStream>,
+        passenger_addr: SocketAddr,
+    ) -> Self {
+        Self {
+            central_driver,
+            passenger_write_stream: Arc::new(Mutex::new(write_stream)),
+            passenger_addr: Some(passenger_addr),
+        }
+    }
+}
+
 #[derive(Message)]
 #[rtype(result = "()")]
 struct TripStatus {
