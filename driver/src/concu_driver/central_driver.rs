@@ -114,6 +114,21 @@ impl Handler<InsertDriverConnection> for CentralDriver {
 
 #[derive(Message)]
 #[rtype(result = "()")]
+pub struct RemoveDriverConnection {
+    pub id: u32
+}
+
+impl Handler<RemoveDriverConnection> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: RemoveDriverConnection, _ctx: &mut Context<Self>) -> Self::Result {
+        log::info!("Disconnecting with driver {}", msg.id);
+        self.connection_with_drivers.remove(&msg.id);
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
 pub struct StartElection {}
 
 impl Handler<StartElection> for CentralDriver {

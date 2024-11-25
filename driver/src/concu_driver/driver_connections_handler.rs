@@ -92,6 +92,7 @@ impl DriverConnectionsHandler {
                 central_driver_addr.clone(),
                 Arc::new(Mutex::new(w)),
                 driver_addr,
+                driver_id,
             )
         });
 

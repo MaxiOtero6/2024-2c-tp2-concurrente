@@ -13,6 +13,8 @@ use tokio::{
     net::TcpStream,
 };
 
+use crate::concu_driver::central_driver::RemoveDriverConnection;
+
 use super::{
     central_driver::{
         Alive, CentralDriver, Coordinator, Election, InsertDriverConnection, StartElection,
@@ -27,8 +29,10 @@ pub struct DriverConnection {
     driver_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
     // Direccion del stream del driver
     driver_addr: Option<SocketAddr>,
-    // ID del driver
+    // ID de este driver
     id: u32,
+    // ID del driver
+    driver_id: Option<u32>,
 }
 
 impl DriverConnection {
@@ -37,12 +41,14 @@ impl DriverConnection {
         self_driver_addr: Addr<CentralDriver>,
         wstream: Arc<Mutex<WriteHalf<TcpStream>>>,
         driver_addr: Option<SocketAddr>,
+        driver_id: Option<u32>,
     ) -> Self {
         DriverConnection {
             id,
             central_driver: self_driver_addr,
             driver_write_stream: wstream,
             driver_addr,
+            driver_id,
         }
     }
 }
@@ -60,6 +66,11 @@ impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
     }
 
     fn finished(&mut self, ctx: &mut Self::Context) {
+        if let Some(did) = self.driver_id {
+            log::warn!("Broken pipe with driver {}", did);
+            self.central_driver
+                .do_send(RemoveDriverConnection { id: did });
+        }
         // Election
         self.central_driver.do_send(StartElection {});
 
@@ -129,6 +140,7 @@ impl Handler<RecvAll> for DriverConnection {
                     .map_err(|e| e.to_string())?;
             }
             DriverMessages::ResponseDriverId { id } => {
+                self.driver_id = Some(id);
                 self.central_driver
                     .try_send(InsertDriverConnection {
                         id,
