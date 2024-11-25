@@ -8,6 +8,8 @@ use tokio::{
 };
 use tokio_stream::wrappers::LinesStream;
 
+use crate::concu_driver::central_driver::StartElection;
+
 use super::{
     central_driver::{CentralDriver, InsertDriverConnection},
     consts::{MAX_DRIVER_PORT, MIN_DRIVER_PORT},
@@ -51,6 +53,9 @@ impl DriverConnectionsHandler {
         Self::connect_all_drivers(id, central_driver_addr).await?;
 
         // raise election
+        central_driver_addr
+            .try_send(StartElection {})
+            .map_err(|e| e.to_string())?;
 
         let self_addr = get_driver_address_by_id(id).map_err(|e| e.to_string())?;
 

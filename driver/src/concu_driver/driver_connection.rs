@@ -14,7 +14,9 @@ use tokio::{
 };
 
 use super::{
-    central_driver::{CentralDriver, InsertDriverConnection},
+    central_driver::{
+        Alive, CentralDriver, Coordinator, Election, InsertDriverConnection, StartElection,
+    },
     json_parser::DriverMessages,
 };
 
@@ -59,6 +61,7 @@ impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
 
     fn finished(&mut self, ctx: &mut Self::Context) {
         // Election
+        self.central_driver.do_send(StartElection {});
 
         ctx.stop();
     }
@@ -131,6 +134,21 @@ impl Handler<RecvAll> for DriverConnection {
                         id,
                         addr: ctx.address(),
                     })
+                    .map_err(|e| e.to_string())?;
+            }
+            DriverMessages::Election { sender_id } => {
+                self.central_driver
+                    .try_send(Election { sender_id })
+                    .map_err(|e| e.to_string())?;
+            }
+            DriverMessages::Alive { responder_id } => {
+                self.central_driver
+                    .try_send(Alive { responder_id })
+                    .map_err(|e| e.to_string())?;
+            }
+            DriverMessages::Coordinator { leader_id } => {
+                self.central_driver
+                    .try_send(Coordinator { leader_id })
                     .map_err(|e| e.to_string())?;
             }
         }

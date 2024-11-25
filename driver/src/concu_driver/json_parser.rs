@@ -4,5 +4,7 @@ use serde::{Deserialize, Serialize};
 pub enum DriverMessages {
     RequestDriverId {},
     ResponseDriverId { id: u32 },
+    Coordinator { leader_id: u32 },
+    Election { sender_id: u32 },
+    Alive { responder_id: u32 },
 }
-

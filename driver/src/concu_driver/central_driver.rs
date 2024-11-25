@@ -3,12 +3,14 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use actix::{Actor, Addr, AsyncContext, Context, Handler, Message};
+use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, SpawnHandle};
+
+use crate::concu_driver::{driver_connection::SendAll, json_parser::DriverMessages};
 
 use super::{
-    driver_connection::DriverConnection, handle_trip::TripHandler,
-    passenger_connection::PassengerConnection, payment_connection::PaymentConnection,
-    position::Position,
+    consts::ELECTION_TIMEOUT_DURATION, driver_connection::DriverConnection,
+    handle_trip::TripHandler, passenger_connection::PassengerConnection,
+    payment_connection::PaymentConnection, position::Position,
 };
 
 pub struct CentralDriver {
@@ -27,6 +29,8 @@ pub struct CentralDriver {
     leader_id: Option<u32>,
     // Id del driver
     id: u32,
+    // Timeout de la eleccion
+    election_timeout: Option<SpawnHandle>,
 }
 
 impl Actor for CentralDriver {
@@ -43,7 +47,16 @@ impl CentralDriver {
             trip_handler: TripHandler::new(ctx.address()).start(),
             connection_with_payment: None,
             connection_with_passenger: None,
+            election_timeout: None,
         })
+    }
+
+    fn im_leader(&self) -> bool {
+        if let Some(lid) = self.leader_id {
+            return self.id == lid;
+        }
+
+        false
     }
 }
 
@@ -96,5 +109,134 @@ impl Handler<InsertDriverConnection> for CentralDriver {
     fn handle(&mut self, msg: InsertDriverConnection, _ctx: &mut Context<Self>) -> Self::Result {
         log::info!("Connecting with driver {}", msg.id);
         self.connection_with_drivers.insert(msg.id, msg.addr);
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct StartElection {}
+
+impl Handler<StartElection> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, _msg: StartElection, ctx: &mut Context<Self>) -> Self::Result {
+        self.leader_id = None;
+        let mut higher_processes = false;
+
+        let parsed_data = serde_json::to_string(&DriverMessages::Election { sender_id: self.id })
+            .inspect_err(|e| log::error!("{}", e.to_string()));
+
+        // Send election messages to all processes with higher IDs
+        for (&id, driver) in &self.connection_with_drivers {
+            if id > self.id {
+                if let Ok(data) = &parsed_data {
+                    driver.do_send(SendAll { data: data.clone() });
+                }
+
+                higher_processes = true;
+            }
+        }
+
+        // If no higher processes, declare Coordinator
+        if !higher_processes {
+            for (_, driver) in &self.connection_with_drivers {
+                let parsed_data =
+                    serde_json::to_string(&DriverMessages::Coordinator { leader_id: self.id })
+                        .inspect_err(|e| log::error!("{}", e.to_string()));
+
+                if let Ok(data) = parsed_data {
+                    driver.do_send(SendAll { data });
+                }
+            }
+        } else {
+            let leader_id = self.id.clone();
+            // Set timeout for responses
+            self.election_timeout =
+                Some(ctx.run_later(ELECTION_TIMEOUT_DURATION, move |_, ctx| {
+                    // Falta notificar a todos la victoria ??
+                    log::warn!("No one answer the election");
+                    ctx.notify(Coordinator { leader_id });
+                }));
+        }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct Election {
+    pub sender_id: u32,
+}
+
+impl Handler<Election> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: Election, ctx: &mut Context<Self>) -> Self::Result {
+        log::debug!(
+            "Process {} received election message from {}",
+            self.id,
+            msg.sender_id
+        );
+
+        // If this process has higher ID, respond and start new election
+        if self.id > msg.sender_id {
+            // Send alive message to sender
+            if let Some(sender) = self.connection_with_drivers.get(&msg.sender_id) {
+                let parsed_data = serde_json::to_string(&DriverMessages::Alive {
+                    responder_id: self.id,
+                })
+                .inspect_err(|e| log::error!("{}", e.to_string()));
+
+                if let Ok(data) = parsed_data {
+                    sender.do_send(SendAll { data });
+                }
+            }
+
+            // Start new election
+            ctx.notify(StartElection {});
+        }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct Alive {
+    pub responder_id: u32,
+}
+
+impl Handler<Alive> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: Alive, ctx: &mut Context<Self>) -> Self::Result {
+        log::debug!(
+            "Process {} received alive message from {}",
+            self.id,
+            msg.responder_id
+        );
+
+        if let Some(timeout) = self.election_timeout {
+            ctx.cancel_future(timeout);
+            self.election_timeout = None;
+        }
+        // Cancel election timeout as we received a response
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct Coordinator {
+    pub leader_id: u32,
+}
+
+impl Handler<Coordinator> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: Coordinator, _ctx: &mut Context<Self>) -> Self::Result {
+        log::info!("{} is the new leader", msg.leader_id);
+
+        self.leader_id = Some(msg.leader_id);
+
+        if self.im_leader() {
+            log::info!("Oh!, that is me");
+        }
     }
 }
