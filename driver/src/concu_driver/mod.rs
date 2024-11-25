@@ -8,3 +8,4 @@ pub mod payment_connection;
 pub mod position;
 pub mod utils;
 pub mod driver_connections_handler;
+pub mod json_parser;

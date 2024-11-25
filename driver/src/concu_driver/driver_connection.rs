@@ -13,7 +13,10 @@ use tokio::{
     net::TcpStream,
 };
 
-use super::central_driver::CentralDriver;
+use super::{
+    central_driver::{CentralDriver, InsertDriverConnection},
+    json_parser::DriverMessages,
+};
 
 pub struct DriverConnection {
     // Direccion del actor CentralDriver
@@ -22,15 +25,19 @@ pub struct DriverConnection {
     driver_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
     // Direccion del stream del driver
     driver_addr: Option<SocketAddr>,
+    // ID del driver
+    id: u32,
 }
 
 impl DriverConnection {
     pub fn new(
+        id: u32,
         self_driver_addr: Addr<CentralDriver>,
         wstream: Arc<Mutex<WriteHalf<TcpStream>>>,
         driver_addr: Option<SocketAddr>,
     ) -> Self {
         DriverConnection {
+            id,
             central_driver: self_driver_addr,
             driver_write_stream: wstream,
             driver_addr,
@@ -99,13 +106,35 @@ impl Handler<SendAll> for DriverConnection {
 }
 
 #[derive(Message)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<(), String>")]
 pub struct RecvAll {
     pub data: String,
 }
 
 impl Handler<RecvAll> for DriverConnection {
-    type Result = ();
+    type Result = Result<(), String>;
 
-    fn handle(&mut self, msg: RecvAll, _ctx: &mut Context<Self>) -> Self::Result {}
+    fn handle(&mut self, msg: RecvAll, ctx: &mut Context<Self>) -> Self::Result {
+        let data = serde_json::from_str(&msg.data).map_err(|e| e.to_string())?;
+
+        match data {
+            DriverMessages::RequestDriverId {} => {
+                let data = DriverMessages::ResponseDriverId { id: self.id };
+                let parsed_json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
+                ctx.address()
+                    .try_send(SendAll { data: parsed_json })
+                    .map_err(|e| e.to_string())?;
+            }
+            DriverMessages::ResponseDriverId { id } => {
+                self.central_driver
+                    .try_send(InsertDriverConnection {
+                        id,
+                        addr: ctx.address(),
+                    })
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        Ok(())
+    }
 }
