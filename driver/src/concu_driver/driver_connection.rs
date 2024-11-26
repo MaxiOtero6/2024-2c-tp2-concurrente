@@ -17,7 +17,8 @@ use crate::concu_driver::central_driver::RemoveDriverConnection;
 
 use super::{
     central_driver::{
-        Alive, CentralDriver, Coordinator, Election, InsertDriverConnection, StartElection,
+        Alive, CentralDriver, Coordinator, Election, InsertDriverConnection, SetDriverPosition,
+        StartElection,
     },
     json_parser::DriverMessages,
 };
@@ -161,6 +162,17 @@ impl Handler<RecvAll> for DriverConnection {
             DriverMessages::Coordinator { leader_id } => {
                 self.central_driver
                     .try_send(Coordinator { leader_id })
+                    .map_err(|e| e.to_string())?;
+            }
+            DriverMessages::NotifyPosition {
+                driver_id,
+                driver_position,
+            } => {
+                self.central_driver
+                    .try_send(SetDriverPosition {
+                        driver_id,
+                        driver_position,
+                    })
                     .map_err(|e| e.to_string())?;
             }
         }

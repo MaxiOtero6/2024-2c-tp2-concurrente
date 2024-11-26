@@ -62,8 +62,49 @@ impl CentralDriver {
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct SetDriverPosition {
+pub struct NotifyPositionToLeader {
     pub driver_location: Position,
+}
+
+impl Handler<NotifyPositionToLeader> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: NotifyPositionToLeader, ctx: &mut Context<Self>) -> Self::Result {
+        if self.leader_id.is_none() {
+            return;
+        }
+
+        if let Some(lid) = self.leader_id {
+            if self.im_leader() {
+                ctx.address().do_send(SetDriverPosition {
+                    driver_id: self.id,
+                    driver_position: msg.driver_location,
+                });
+
+                return;
+            }
+
+            let parsed_data = serde_json::to_string(&DriverMessages::NotifyPosition {
+                driver_id: self.id,
+                driver_position: msg.driver_location,
+            })
+            .inspect_err(|e| log::error!("{}", e.to_string()));
+
+            if let Ok(data) = parsed_data {
+                match self.connection_with_drivers.get(&lid) {
+                    Some(leader) => leader.do_send(SendAll { data }),
+                    None => (),
+                };
+            }
+        }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct SetDriverPosition {
+    pub driver_id: u32,
+    pub driver_position: Position,
 }
 
 impl Handler<SetDriverPosition> for CentralDriver {
@@ -71,12 +112,10 @@ impl Handler<SetDriverPosition> for CentralDriver {
 
     fn handle(&mut self, msg: SetDriverPosition, _ctx: &mut Context<Self>) -> Self::Result {
         let lock = self.driver_positions.clone();
-        let driver_id = self.id;
 
         if let Ok(mut wlock) = lock.lock() {
-            log::debug!("Driver {} in {:?}", driver_id, msg.driver_location);
-            wlock.insert(driver_id, msg.driver_location);
-            log::debug!("{:?}", wlock.get(&driver_id));
+            log::debug!("Driver {} in {:?}", msg.driver_id, msg.driver_position);
+            wlock.insert(msg.driver_id, msg.driver_position);
         };
     }
 }

@@ -10,3 +10,4 @@ pub const MAX_DISTANCE: u32 = 10;
 pub const PAYMENT_PORT: u32 = 3000;
 pub const LOG_LEVEL: LevelFilter = LevelFilter::Debug;
 pub const ELECTION_TIMEOUT_DURATION: Duration = Duration::from_secs(1);
+pub const POSITION_NOTIFICATION_INTERVAL: Duration = Duration::from_secs(5);
