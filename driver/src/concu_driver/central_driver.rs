@@ -210,6 +210,9 @@ impl Handler<StartElection> for CentralDriver {
 
         // If no higher processes, declare Coordinator
         if !higher_processes {
+            log::info!("[ELECTION] There is no one bigger than me!");
+            ctx.notify(Coordinator { leader_id: self.id });
+            
             for (_, driver) in &self.connection_with_drivers {
                 let parsed_data =
                     serde_json::to_string(&DriverMessages::Coordinator { leader_id: self.id })
@@ -224,9 +227,6 @@ impl Handler<StartElection> for CentralDriver {
                     driver.do_send(SendAll { data });
                 }
             }
-
-            log::info!("[ELECTION] There is no one bigger than me!");
-            ctx.notify(Coordinator { leader_id: self.id });
         } else {
             let leader_id = self.id.clone();
             // Set timeout for responses
