@@ -43,7 +43,7 @@ impl DriverConnectionsHandler {
             })?;
 
             if let Ok(mut socket) = TcpStream::connect(addr.clone()).await {
-                let request = serde_json::to_string(&CommonMessages::ResponseIdentification {
+                let request = serde_json::to_string(&CommonMessages::Identification {
                     id: self_id,
                     type_: 'D',
                 })
@@ -126,7 +126,7 @@ impl DriverConnectionsHandler {
             })?;
 
             match response {
-                CommonMessages::ResponseIdentification { id, type_ } => match type_ {
+                CommonMessages::Identification { id, type_ } => match type_ {
                     'D' => Self::connect_with(id, central_driver_addr, socket, id).await?,
                     _ => (),
                 },

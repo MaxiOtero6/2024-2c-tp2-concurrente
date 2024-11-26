@@ -4,8 +4,7 @@ use super::position::Position;
 
 #[derive(Serialize, Deserialize)]
 pub enum CommonMessages {
-    RequestIdentification {},
-    ResponseIdentification { id: u32, type_: char },
+    Identification { id: u32, type_: char },
 }
 
 #[derive(Serialize, Deserialize)]
