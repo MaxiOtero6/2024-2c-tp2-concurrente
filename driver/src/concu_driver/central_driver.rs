@@ -17,7 +17,7 @@ pub struct CentralDriver {
     // Direccion del actor TripHandler
     trip_handler: Addr<TripHandler>,
     // Direccion del actor PassengerConnection
-    connection_with_passenger: Option<Addr<PassengerConnection>>,
+    awaiting_response_passengers: HashMap<u32, Addr<PassengerConnection>>,
     // Direccion del actor PaymentConnection
     connection_with_payment: Option<Addr<PaymentConnection>>,
     // Direcciones de los drivers segun su id
@@ -46,7 +46,7 @@ impl CentralDriver {
             connection_with_drivers: HashMap::new(),
             trip_handler: TripHandler::new(ctx.address()).start(),
             connection_with_payment: None,
-            connection_with_passenger: None,
+            awaiting_response_passengers: HashMap::new(),
             election_timeout: None,
         })
     }
@@ -137,16 +137,32 @@ impl Handler<SetPaymentAddr> for CentralDriver {
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct SetPassengerAddr {
-    pub connection_with_passenger: Addr<PassengerConnection>,
+pub struct InsertPassengerConnection {
+    pub id: u32,
+    pub addr: Addr<PassengerConnection>,
 }
 
-impl Handler<SetPassengerAddr> for CentralDriver {
+impl Handler<InsertPassengerConnection> for CentralDriver {
     type Result = ();
 
-    fn handle(&mut self, msg: SetPassengerAddr, _ctx: &mut Context<Self>) -> Self::Result {
-        log::info!("Connecting with new passenger");
-        self.connection_with_passenger = Some(msg.connection_with_passenger);
+    fn handle(&mut self, msg: InsertPassengerConnection, _ctx: &mut Context<Self>) -> Self::Result {
+        log::info!("Connecting with passenger {}", msg.id);
+        self.awaiting_response_passengers.insert(msg.id, msg.addr);
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct RemovePassengerConnection {
+    pub id: u32,
+}
+
+impl Handler<RemovePassengerConnection> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: RemovePassengerConnection, _ctx: &mut Context<Self>) -> Self::Result {
+        log::info!("Disconnecting with passenger {}", msg.id);
+        self.awaiting_response_passengers.remove(&msg.id);
     }
 }
 
@@ -192,10 +208,8 @@ impl Handler<StartElection> for CentralDriver {
         self.leader_id = None;
         let mut higher_processes = false;
 
-        let parsed_data =
-            serde_json::to_string(&DriverMessages::Election { sender_id: self.id }).inspect_err(|e| 
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()),
-            );
+        let parsed_data = serde_json::to_string(&DriverMessages::Election { sender_id: self.id })
+            .inspect_err(|e| log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()));
 
         // Send election messages to all processes with higher IDs
         for (&id, driver) in &self.connection_with_drivers {
@@ -212,16 +226,13 @@ impl Handler<StartElection> for CentralDriver {
         if !higher_processes {
             log::info!("[ELECTION] There is no one bigger than me!");
             ctx.notify(Coordinator { leader_id: self.id });
-            
+
             for (_, driver) in &self.connection_with_drivers {
                 let parsed_data =
                     serde_json::to_string(&DriverMessages::Coordinator { leader_id: self.id })
-                        .inspect_err(|e| log::error!(
-                            "{}:{}, {}",
-                            std::file!(),
-                            std::line!(),
-                            e.to_string()
-                        ));
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                        });
 
                 if let Ok(data) = parsed_data {
                     driver.do_send(SendAll { data });
@@ -263,12 +274,9 @@ impl Handler<Election> for CentralDriver {
                 let parsed_data = serde_json::to_string(&DriverMessages::Alive {
                     responder_id: self.id,
                 })
-                .inspect_err(|e| log::error!(
-                    "{}:{}, {}",
-                    std::file!(),
-                    std::line!(),
-                    e.to_string()
-                ));
+                .inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
 
                 if let Ok(data) = parsed_data {
                     sender.do_send(SendAll { data });

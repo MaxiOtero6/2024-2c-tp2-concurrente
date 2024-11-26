@@ -1,9 +1,8 @@
-use core::str;
 use std::sync::{Arc, Mutex};
 
 use actix::{Actor, Addr, AsyncContext};
 use tokio::{
-    io::{split, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     task::JoinHandle,
 };
@@ -12,9 +11,10 @@ use tokio_stream::wrappers::LinesStream;
 use crate::concu_driver::{central_driver::StartElection, json_parser::CommonMessages};
 
 use super::{
-    central_driver::{CentralDriver, InsertDriverConnection},
+    central_driver::{CentralDriver, InsertDriverConnection, InsertPassengerConnection},
     consts::{MAX_DRIVER_PORT, MIN_DRIVER_PORT},
     driver_connection::DriverConnection,
+    passenger_connection::PassengerConnection,
     utils::get_driver_address_by_id,
 };
 
@@ -58,7 +58,7 @@ impl DriverConnectionsHandler {
                         format!("Error connecting with {}, reason: {}", addr, e.to_string())
                     })?;
 
-                Self::connect_with(self_id, central_driver_addr, socket, driver_id).await?;
+                Self::connect_with_driver(self_id, central_driver_addr, socket, driver_id).await?;
             }
 
             driver_id += 1;
@@ -127,15 +127,15 @@ impl DriverConnectionsHandler {
 
             match response {
                 CommonMessages::Identification { id, type_ } => match type_ {
-                    'D' => Self::connect_with(id, central_driver_addr, socket, id).await?,
+                    'D' => Self::connect_with_driver(id, central_driver_addr, socket, id).await?,
+                    'P' => Self::connect_with_passenger(central_driver_addr, socket, id).await?,
                     _ => (),
                 },
-                _ => (),
             }
         }
     }
 
-    async fn connect_with(
+    async fn connect_with_driver(
         self_id: u32,
         central_driver_addr: &Addr<CentralDriver>,
         socket: TcpStream,
@@ -159,6 +159,30 @@ impl DriverConnectionsHandler {
             .try_send(InsertDriverConnection {
                 id: driver_id,
                 addr: driver_conn,
+            })
+            .map_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                e.to_string()
+            })
+    }
+
+    async fn connect_with_passenger(
+        central_driver_addr: &Addr<CentralDriver>,
+        socket: TcpStream,
+        passenger_id: u32,
+    ) -> Result<(), String> {
+        let passenger_addr: Option<std::net::SocketAddr> = socket.peer_addr().ok();
+        let (r, w) = split(socket);
+
+        let passenger_conn = PassengerConnection::create(|ctx| {
+            ctx.add_stream(LinesStream::new(BufReader::new(r).lines()));
+            PassengerConnection::new(central_driver_addr.clone(), w, passenger_addr, passenger_id)
+        });
+
+        central_driver_addr
+            .try_send(InsertPassengerConnection {
+                id: passenger_id,
+                addr: passenger_conn,
             })
             .map_err(|e| {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
