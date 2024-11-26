@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use actix::{Actor, Addr, AsyncContext, Context, Message, WrapFuture};
 use tokio::time::sleep;
 
@@ -11,7 +13,7 @@ pub struct TripHandler {
     // Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
     // Posicion actual del driver
-    current_location: Position,
+    current_location: Arc<Mutex<Position>>,
 }
 
 impl Actor for TripHandler {
@@ -19,21 +21,24 @@ impl Actor for TripHandler {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         let recipient = self.central_driver.clone();
-        let mut initial_position = self.current_location.clone();
+        let initial_position = self.current_location.clone();
 
         ctx.spawn(
             async move {
                 loop {
-                    // Simulate position change
-                    initial_position.simulate();
+                    if let Ok(mut lock) = initial_position.lock() {
+                        // Simulate position change
 
-                    let _ = recipient
-                        .try_send(NotifyPositionToLeader {
-                            driver_location: initial_position.clone(),
-                        })
-                        .inspect_err(|e| {
-                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                        });
+                        lock.simulate();
+
+                        let _ = recipient
+                            .try_send(NotifyPositionToLeader {
+                                driver_location: lock.clone(),
+                            })
+                            .inspect_err(|e| {
+                                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                            });
+                    }
 
                     sleep(POSITION_NOTIFICATION_INTERVAL).await;
                 }
@@ -47,7 +52,7 @@ impl TripHandler {
     pub fn new(central_driver: Addr<CentralDriver>) -> Self {
         Self {
             central_driver,
-            current_location: Position::random(),
+            current_location: Arc::new(Mutex::new(Position::random())),
         }
     }
 }
