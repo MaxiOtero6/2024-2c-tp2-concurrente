@@ -32,4 +32,27 @@ impl Position {
             y: self.y,
         }
     }
+
+    pub fn simulate(&mut self) {
+        let mut rng = rand::thread_rng();
+
+        let x: i32 = (self.x as i32) - rng.gen_range(-10..=10);
+        let y: i32 = (self.y as i32) - rng.gen_range(-10..=10);
+
+        self.x = if x < 0 {
+            0
+        } else if x > 100 {
+            100
+        } else {
+            x
+        } as u32;
+
+        self.y = if y < 0 {
+            0
+        } else if y > 100 {
+            100
+        } else {
+            y
+        } as u32;
+    }
 }
