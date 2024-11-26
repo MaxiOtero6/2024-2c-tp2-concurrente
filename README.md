@@ -351,7 +351,7 @@ Se utilizaran sockets TCP, con los puertos definidos de la siguiente forma:
 
 -   $Passenger \in [8000, 8020]$
 -   DriverLeader: 8080
--   $Passenger \in [8081, 8101]$
+-   $Driver \in [8081, 8101]$
 -   Payment: 3000
 
 Planteamos que el Driver que ejerza de lider debe tener un listener escuchando en el puerto 8080.
