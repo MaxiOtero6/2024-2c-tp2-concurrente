@@ -1,8 +1,9 @@
 use rand::Rng;
 
+#[derive(Debug)]
 pub struct Position {
-    x: u32,
-    y: u32,
+    pub x: u32,
+    pub y: u32,
 }
 
 impl Position {
@@ -23,5 +24,12 @@ impl Position {
         let y: u32 = (p.y as i32 - self.y as i32).abs() as u32;
 
         x + y
+    }
+
+    pub fn clone(&self) -> Self {
+        Self {
+            x: self.x,
+            y: self.y,
+        }
     }
 }
