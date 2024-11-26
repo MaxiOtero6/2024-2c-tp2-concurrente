@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::position::Position;
+use common::utils::position::Position;
 
 #[derive(Serialize, Deserialize)]
 pub enum CommonMessages {

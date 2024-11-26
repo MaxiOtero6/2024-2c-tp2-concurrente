@@ -4,13 +4,14 @@ use std::{
 };
 
 use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, SpawnHandle};
+use common::utils::position::Position;
 
 use crate::concu_driver::{driver_connection::SendAll, json_parser::DriverMessages};
 
 use super::{
     consts::ELECTION_TIMEOUT_DURATION, driver_connection::DriverConnection,
     handle_trip::TripHandler, passenger_connection::PassengerConnection,
-    payment_connection::PaymentConnection, position::Position,
+    payment_connection::PaymentConnection,
 };
 
 pub struct CentralDriver {

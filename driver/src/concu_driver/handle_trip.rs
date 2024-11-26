@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use actix::{Actor, Addr, AsyncContext, Context, Message, WrapFuture};
+use common::utils::position::Position;
 use tokio::time::sleep;
 
 use super::{
     central_driver::{CentralDriver, NotifyPositionToLeader},
     consts::POSITION_NOTIFICATION_INTERVAL,
-    position::Position,
 };
 
 pub struct TripHandler {

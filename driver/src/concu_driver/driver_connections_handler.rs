@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use actix::{Actor, Addr, AsyncContext};
+use common::utils::consts::{MAX_DRIVER_PORT, MIN_DRIVER_PORT};
 use tokio::{
     io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
@@ -12,7 +13,6 @@ use crate::concu_driver::{central_driver::StartElection, json_parser::CommonMess
 
 use super::{
     central_driver::{CentralDriver, InsertDriverConnection, InsertPassengerConnection},
-    consts::{MAX_DRIVER_PORT, MIN_DRIVER_PORT},
     driver_connection::DriverConnection,
     passenger_connection::PassengerConnection,
     utils::get_driver_address_by_id,

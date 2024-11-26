@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use crate::concu_driver::consts::{HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT};
+use common::utils::consts::{HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT};
 
 pub fn get_driver_address_by_id(id: u32) -> Result<String, Box<dyn Error>> {
     fn get_port_by_id(id: u32) -> u32 {

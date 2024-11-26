@@ -7,11 +7,9 @@ use tokio::{
 };
 use tokio_stream::wrappers::LinesStream;
 
-use super::{
-    central_driver::CentralDriver,
-    consts::{HOST, PAYMENT_PORT},
-};
+use super::central_driver::CentralDriver;
 
+use common::utils::consts::{HOST, PAYMENT_PORT};
 pub struct PaymentConnection {
     // Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
