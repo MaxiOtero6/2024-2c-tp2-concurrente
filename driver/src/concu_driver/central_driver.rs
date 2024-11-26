@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, SpawnHandle};
@@ -24,7 +24,7 @@ pub struct CentralDriver {
     connection_with_drivers: HashMap<u32, Addr<DriverConnection>>, // 0...N
     // Posiciones de los demas drivers segun su id,
     // cobra sentido si este driver es lider
-    driver_positions: Arc<RwLock<HashMap<u32, Position>>>,
+    driver_positions: Arc<Mutex<HashMap<u32, Position>>>,
     // Id del driver lider
     leader_id: Option<u32>,
     // Id del driver
@@ -42,7 +42,7 @@ impl CentralDriver {
         CentralDriver::create(|ctx| Self {
             id,
             leader_id: None,
-            driver_positions: Arc::new(RwLock::new(HashMap::new())),
+            driver_positions: Arc::new(Mutex::new(HashMap::new())),
             connection_with_drivers: HashMap::new(),
             trip_handler: TripHandler::new(ctx.address()).start(),
             connection_with_payment: None,
@@ -62,8 +62,23 @@ impl CentralDriver {
 
 #[derive(Message)]
 #[rtype(result = "()")]
-struct InfoPosition {
-    driver_location: Position,
+pub struct SetDriverPosition {
+    pub driver_location: Position,
+}
+
+impl Handler<SetDriverPosition> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: SetDriverPosition, _ctx: &mut Context<Self>) -> Self::Result {
+        let lock = self.driver_positions.clone();
+        let driver_id = self.id;
+
+        if let Ok(mut wlock) = lock.lock() {
+            log::debug!("Driver {} in {:?}", driver_id, msg.driver_location);
+            wlock.insert(driver_id, msg.driver_location);
+            log::debug!("{:?}", wlock.get(&driver_id));
+        };
+    }
 }
 
 #[derive(Message)]
@@ -115,7 +130,7 @@ impl Handler<InsertDriverConnection> for CentralDriver {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct RemoveDriverConnection {
-    pub id: u32
+    pub id: u32,
 }
 
 impl Handler<RemoveDriverConnection> for CentralDriver {
