@@ -38,9 +38,10 @@ impl PaymentConnection {
 
         let addr = format!("{}:{}", HOST, PAYMENT_PORT);
 
-        let socket = TcpStream::connect(addr.clone())
-            .await
-            .map_err(|e| e.to_string())?;
+        let socket = TcpStream::connect(addr.clone()).await.map_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            e.to_string()
+        })?;
 
         let (r, w) = split(socket);
 

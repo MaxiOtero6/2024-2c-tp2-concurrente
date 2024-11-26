@@ -31,7 +31,9 @@ impl Actor for TripHandler {
                         .try_send(NotifyPositionToLeader {
                             driver_location: initial_position.clone(),
                         })
-                        .inspect_err(|e| log::error!("{}", e.to_string()));
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                        });
 
                     sleep(POSITION_NOTIFICATION_INTERVAL).await;
                 }

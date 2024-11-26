@@ -37,7 +37,10 @@ impl DriverConnectionsHandler {
         let max_id = MAX_DRIVER_PORT - MIN_DRIVER_PORT;
 
         while driver_id <= max_id {
-            let addr = get_driver_address_by_id(driver_id).map_err(|e| e.to_string())?;
+            let addr = get_driver_address_by_id(driver_id).map_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                e.to_string()
+            })?;
 
             if let Ok(mut socket) = TcpStream::connect(addr.clone()).await {
                 let request = serde_json::to_string(&CommonMessages::ResponseIdentification {
@@ -48,9 +51,12 @@ impl DriverConnectionsHandler {
                     format!("Error connecting with {}, reason: {}", addr, e.to_string())
                 })?;
 
-                socket.write_all(request.as_bytes()).await.map_err(|e| {
-                    format!("Error connecting with {}, reason: {}", addr, e.to_string())
-                })?;
+                socket
+                    .write_all((request + "\n").as_bytes())
+                    .await
+                    .map_err(|e| {
+                        format!("Error connecting with {}, reason: {}", addr, e.to_string())
+                    })?;
 
                 Self::connect_with(self_id, central_driver_addr, socket, driver_id).await?;
             }
@@ -67,37 +73,57 @@ impl DriverConnectionsHandler {
         // raise election
         central_driver_addr
             .try_send(StartElection {})
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                e.to_string()
+            })?;
 
-        let self_addr = get_driver_address_by_id(id).map_err(|e| e.to_string())?;
+        let self_addr = get_driver_address_by_id(id).map_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            e.to_string()
+        })?;
 
         log::info!("My addr is {}", self_addr);
 
-        let listener = TcpListener::bind(self_addr)
-            .await
-            .map_err(|e| e.to_string())?;
+        let listener = TcpListener::bind(self_addr).await.map_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            e.to_string()
+        })?;
 
         log::info!("Listening to new connections!");
 
         loop {
-            let (mut socket, addr) = listener.accept().await.map_err(|e| e.to_string())?;
+            let (mut socket, addr) = listener.accept().await.map_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                e.to_string()
+            })?;
 
             log::debug!("Connection accepted from {}", addr);
 
-            let mut buf = [0u8; 64];
+            let mut reader = BufReader::new(&mut socket);
 
-            let n = socket.read(&mut buf).await.map_err(|e| e.to_string())?;
-            log::debug!("n: {}", n);
+            let mut str_response = String::new();
 
-            if n == 0 {
+            reader.read_line(&mut str_response).await.map_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                e.to_string()
+            })?;
+
+            if str_response.is_empty() {
                 return Err("Error receiving identification".into());
             }
 
-            let str_response = str::from_utf8(&buf[..n]).map_err(|e| e.to_string())?;
-            // log::debug!("Identification received: {}", str_response);
-
-            let response: CommonMessages =
-                serde_json::from_str(str_response).map_err(|e| e.to_string())?;
+            let response: CommonMessages = serde_json::from_str(&str_response).map_err(|e| {
+                log::error!(
+                    "{}:{}, {}, str: {}, len: {}",
+                    std::file!(),
+                    std::line!(),
+                    e.to_string(),
+                    str_response,
+                    str_response.len()
+                );
+                e.to_string()
+            })?;
 
             match response {
                 CommonMessages::ResponseIdentification { id, type_ } => match type_ {
@@ -134,6 +160,9 @@ impl DriverConnectionsHandler {
                 id: driver_id,
                 addr: driver_conn,
             })
-            .map_err(|e| e.to_string())
+            .map_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                e.to_string()
+            })
     }
 }

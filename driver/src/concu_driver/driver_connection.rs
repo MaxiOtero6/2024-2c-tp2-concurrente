@@ -16,8 +16,7 @@ use crate::concu_driver::central_driver::RemoveDriverConnection;
 
 use super::{
     central_driver::{
-        Alive, CentralDriver, Coordinator, Election, SetDriverPosition,
-        StartElection,
+        Alive, CentralDriver, Coordinator, Election, SetDriverPosition, StartElection,
     },
     json_parser::DriverMessages,
 };
@@ -58,18 +57,17 @@ impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
         if let Ok(data) = msg {
             log::debug!("recv {}", data);
 
-            let _ = ctx
-                .address()
-                .try_send(RecvAll { data })
-                .inspect_err(|e| log::error!("{}", e.to_string()));
+            let _ = ctx.address().try_send(RecvAll { data }).inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            });
         }
     }
 
     fn finished(&mut self, ctx: &mut Self::Context) {
         // if let Some(did) = self.driver_id {
-            log::warn!("Broken pipe with driver {}", self.driver_id);
-            self.central_driver
-                .do_send(RemoveDriverConnection { id: self.driver_id });
+        log::warn!("Broken pipe with driver {}", self.driver_id);
+        self.central_driver
+            .do_send(RemoveDriverConnection { id: self.driver_id });
         // }
         // Election
         self.central_driver.do_send(StartElection {});
@@ -97,14 +95,15 @@ impl Handler<SendAll> for DriverConnection {
         let w = self.driver_write_stream.clone();
         wrap_future::<_, Self>(async move {
             if let Ok(mut writer) = w.lock() {
-                let _ = writer
-                    .write_all(message.as_bytes())
-                    .await
-                    .inspect_err(|e| log::error!("{}", e.to_string()));
+                let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
                 let _ = writer
                     .flush()
                     .await
-                    .inspect_err(|e| log::error!("{}", e.to_string()))
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                    })
                     .inspect(|_| log::debug!("sent {}", message));
             }
         })
@@ -122,23 +121,35 @@ impl Handler<RecvAll> for DriverConnection {
     type Result = Result<(), String>;
 
     fn handle(&mut self, msg: RecvAll, _ctx: &mut Context<Self>) -> Self::Result {
-        let data = serde_json::from_str(&msg.data).map_err(|e| e.to_string())?;
+        let data = serde_json::from_str(&msg.data).map_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            e.to_string()
+        })?;
 
         match data {
             DriverMessages::Election { sender_id } => {
                 self.central_driver
                     .try_send(Election { sender_id })
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    })?;
             }
             DriverMessages::Alive { responder_id } => {
                 self.central_driver
                     .try_send(Alive { responder_id })
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    })?;
             }
             DriverMessages::Coordinator { leader_id } => {
                 self.central_driver
                     .try_send(Coordinator { leader_id })
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    })?;
             }
             DriverMessages::NotifyPosition {
                 driver_id,
@@ -149,7 +160,10 @@ impl Handler<RecvAll> for DriverConnection {
                         driver_id,
                         driver_position,
                     })
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    })?;
             }
         }
 

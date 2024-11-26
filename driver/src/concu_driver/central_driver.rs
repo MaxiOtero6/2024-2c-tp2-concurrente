@@ -88,7 +88,7 @@ impl Handler<NotifyPositionToLeader> for CentralDriver {
                 driver_id: self.id,
                 driver_position: msg.driver_location,
             })
-            .inspect_err(|e| log::error!("{}", e.to_string()));
+            .inspect_err(|e| log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()));
 
             if let Ok(data) = parsed_data {
                 match self.connection_with_drivers.get(&lid) {
@@ -192,8 +192,10 @@ impl Handler<StartElection> for CentralDriver {
         self.leader_id = None;
         let mut higher_processes = false;
 
-        let parsed_data = serde_json::to_string(&DriverMessages::Election { sender_id: self.id })
-            .inspect_err(|e| log::error!("{}", e.to_string()));
+        let parsed_data =
+            serde_json::to_string(&DriverMessages::Election { sender_id: self.id }).inspect_err(|e| 
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()),
+            );
 
         // Send election messages to all processes with higher IDs
         for (&id, driver) in &self.connection_with_drivers {
@@ -211,13 +213,18 @@ impl Handler<StartElection> for CentralDriver {
             for (_, driver) in &self.connection_with_drivers {
                 let parsed_data =
                     serde_json::to_string(&DriverMessages::Coordinator { leader_id: self.id })
-                        .inspect_err(|e| log::error!("{}", e.to_string()));
+                        .inspect_err(|e| log::error!(
+                            "{}:{}, {}",
+                            std::file!(),
+                            std::line!(),
+                            e.to_string()
+                        ));
 
                 if let Ok(data) = parsed_data {
                     driver.do_send(SendAll { data });
                 }
             }
-            
+
             log::info!("[ELECTION] There is no one bigger than me!");
             ctx.notify(Coordinator { leader_id: self.id });
         } else {
@@ -256,7 +263,12 @@ impl Handler<Election> for CentralDriver {
                 let parsed_data = serde_json::to_string(&DriverMessages::Alive {
                     responder_id: self.id,
                 })
-                .inspect_err(|e| log::error!("{}", e.to_string()));
+                .inspect_err(|e| log::error!(
+                    "{}:{}, {}",
+                    std::file!(),
+                    std::line!(),
+                    e.to_string()
+                ));
 
                 if let Ok(data) = parsed_data {
                     sender.do_send(SendAll { data });
