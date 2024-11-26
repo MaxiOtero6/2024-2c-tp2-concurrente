@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
 };
 
 use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, SpawnHandle};

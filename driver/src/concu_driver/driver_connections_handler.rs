@@ -1,20 +1,20 @@
+use core::str;
 use std::sync::{Arc, Mutex};
 
 use actix::{Actor, Addr, AsyncContext};
 use tokio::{
-    io::{split, AsyncBufReadExt, BufReader},
+    io::{split, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     task::JoinHandle,
 };
 use tokio_stream::wrappers::LinesStream;
 
-use crate::concu_driver::central_driver::StartElection;
+use crate::concu_driver::{central_driver::StartElection, json_parser::CommonMessages};
 
 use super::{
     central_driver::{CentralDriver, InsertDriverConnection},
     consts::{MAX_DRIVER_PORT, MIN_DRIVER_PORT},
-    driver_connection::{DriverConnection, SendAll},
-    json_parser::DriverMessages,
+    driver_connection::DriverConnection,
     utils::get_driver_address_by_id,
 };
 
@@ -39,8 +39,20 @@ impl DriverConnectionsHandler {
         while driver_id <= max_id {
             let addr = get_driver_address_by_id(driver_id).map_err(|e| e.to_string())?;
 
-            if let Ok(socket) = TcpStream::connect(addr.clone()).await {
-                Self::connect_with(self_id, central_driver_addr, socket, Some(driver_id)).await?;
+            if let Ok(mut socket) = TcpStream::connect(addr.clone()).await {
+                let request = serde_json::to_string(&CommonMessages::ResponseIdentification {
+                    id: self_id,
+                    type_: 'D',
+                })
+                .map_err(|e| {
+                    format!("Error connecting with {}, reason: {}", addr, e.to_string())
+                })?;
+
+                socket.write_all(request.as_bytes()).await.map_err(|e| {
+                    format!("Error connecting with {}, reason: {}", addr, e.to_string())
+                })?;
+
+                Self::connect_with(self_id, central_driver_addr, socket, driver_id).await?;
             }
 
             driver_id += 1;
@@ -68,11 +80,32 @@ impl DriverConnectionsHandler {
         log::info!("Listening to new connections!");
 
         loop {
-            let (socket, addr) = listener.accept().await.map_err(|e| e.to_string())?;
+            let (mut socket, addr) = listener.accept().await.map_err(|e| e.to_string())?;
 
             log::debug!("Connection accepted from {}", addr);
 
-            Self::connect_with(id, central_driver_addr, socket, None).await?;
+            let mut buf = [0u8; 64];
+
+            let n = socket.read(&mut buf).await.map_err(|e| e.to_string())?;
+            log::debug!("n: {}", n);
+
+            if n == 0 {
+                return Err("Error receiving identification".into());
+            }
+
+            let str_response = str::from_utf8(&buf[..n]).map_err(|e| e.to_string())?;
+            // log::debug!("Identification received: {}", str_response);
+
+            let response: CommonMessages =
+                serde_json::from_str(str_response).map_err(|e| e.to_string())?;
+
+            match response {
+                CommonMessages::ResponseIdentification { id, type_ } => match type_ {
+                    'D' => Self::connect_with(id, central_driver_addr, socket, id).await?,
+                    _ => (),
+                },
+                _ => (),
+            }
         }
     }
 
@@ -80,7 +113,7 @@ impl DriverConnectionsHandler {
         self_id: u32,
         central_driver_addr: &Addr<CentralDriver>,
         socket: TcpStream,
-        driver_id: Option<u32>,
+        driver_id: u32,
     ) -> Result<(), String> {
         let driver_addr: Option<std::net::SocketAddr> = socket.peer_addr().ok();
         let (r, w) = split(socket);
@@ -96,23 +129,11 @@ impl DriverConnectionsHandler {
             )
         });
 
-        match driver_id {
-            Some(did) => central_driver_addr
-                .try_send(InsertDriverConnection {
-                    id: did,
-                    addr: driver_conn,
-                })
-                .map_err(|e| e.to_string()),
-
-            None => {
-                let parsed_json = serde_json::to_string(&DriverMessages::RequestDriverId {})
-                    .map_err(|e| e.to_string())?;
-
-                driver_conn
-                    .send(SendAll { data: parsed_json })
-                    .await
-                    .map_err(|e| e.to_string())
-            }
-        }
+        central_driver_addr
+            .try_send(InsertDriverConnection {
+                id: driver_id,
+                addr: driver_conn,
+            })
+            .map_err(|e| e.to_string())
     }
 }

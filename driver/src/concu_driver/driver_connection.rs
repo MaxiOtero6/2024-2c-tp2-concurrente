@@ -1,5 +1,4 @@
 use std::{
-    error::Error,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
@@ -17,7 +16,7 @@ use crate::concu_driver::central_driver::RemoveDriverConnection;
 
 use super::{
     central_driver::{
-        Alive, CentralDriver, Coordinator, Election, InsertDriverConnection, SetDriverPosition,
+        Alive, CentralDriver, Coordinator, Election, SetDriverPosition,
         StartElection,
     },
     json_parser::DriverMessages,
@@ -33,7 +32,7 @@ pub struct DriverConnection {
     // ID de este driver
     id: u32,
     // ID del driver
-    driver_id: Option<u32>,
+    driver_id: u32,
 }
 
 impl DriverConnection {
@@ -42,7 +41,7 @@ impl DriverConnection {
         self_driver_addr: Addr<CentralDriver>,
         wstream: Arc<Mutex<WriteHalf<TcpStream>>>,
         driver_addr: Option<SocketAddr>,
-        driver_id: Option<u32>,
+        driver_id: u32,
     ) -> Self {
         DriverConnection {
             id,
@@ -67,11 +66,11 @@ impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
     }
 
     fn finished(&mut self, ctx: &mut Self::Context) {
-        if let Some(did) = self.driver_id {
-            log::warn!("Broken pipe with driver {}", did);
+        // if let Some(did) = self.driver_id {
+            log::warn!("Broken pipe with driver {}", self.driver_id);
             self.central_driver
-                .do_send(RemoveDriverConnection { id: did });
-        }
+                .do_send(RemoveDriverConnection { id: self.driver_id });
+        // }
         // Election
         self.central_driver.do_send(StartElection {});
 
@@ -81,13 +80,6 @@ impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
 
 impl Actor for DriverConnection {
     type Context = Context<Self>;
-}
-
-#[derive(Message)]
-#[rtype(result = "u32")]
-struct LeaderStatus {
-    driver_ids: Vec<u32>,
-    msg_type: String,
 }
 
 #[derive(Message)]
@@ -129,26 +121,10 @@ pub struct RecvAll {
 impl Handler<RecvAll> for DriverConnection {
     type Result = Result<(), String>;
 
-    fn handle(&mut self, msg: RecvAll, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: RecvAll, _ctx: &mut Context<Self>) -> Self::Result {
         let data = serde_json::from_str(&msg.data).map_err(|e| e.to_string())?;
 
         match data {
-            DriverMessages::RequestDriverId {} => {
-                let data = DriverMessages::ResponseDriverId { id: self.id };
-                let parsed_json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
-                ctx.address()
-                    .try_send(SendAll { data: parsed_json })
-                    .map_err(|e| e.to_string())?;
-            }
-            DriverMessages::ResponseDriverId { id } => {
-                self.driver_id = Some(id);
-                self.central_driver
-                    .try_send(InsertDriverConnection {
-                        id,
-                        addr: ctx.address(),
-                    })
-                    .map_err(|e| e.to_string())?;
-            }
             DriverMessages::Election { sender_id } => {
                 self.central_driver
                     .try_send(Election { sender_id })
