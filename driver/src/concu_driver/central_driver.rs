@@ -178,13 +178,16 @@ impl Handler<StartElection> for CentralDriver {
                     driver.do_send(SendAll { data });
                 }
             }
+            
+            log::info!("[ELECTION] There is no one bigger than me!");
+            ctx.notify(Coordinator { leader_id: self.id });
         } else {
             let leader_id = self.id.clone();
             // Set timeout for responses
             self.election_timeout =
                 Some(ctx.run_later(ELECTION_TIMEOUT_DURATION, move |_, ctx| {
                     // Falta notificar a todos la victoria ??
-                    log::warn!("No one answer the election");
+                    log::warn!("[ELECTION] No one answer the election");
                     ctx.notify(Coordinator { leader_id });
                 }));
         }
@@ -202,7 +205,7 @@ impl Handler<Election> for CentralDriver {
 
     fn handle(&mut self, msg: Election, ctx: &mut Context<Self>) -> Self::Result {
         log::debug!(
-            "Process {} received election message from {}",
+            "[ELECTION] Driver {} received election message from {}",
             self.id,
             msg.sender_id
         );
@@ -238,7 +241,7 @@ impl Handler<Alive> for CentralDriver {
 
     fn handle(&mut self, msg: Alive, ctx: &mut Context<Self>) -> Self::Result {
         log::debug!(
-            "Process {} received alive message from {}",
+            "[ELECTION] Driver {} received alive message from {}",
             self.id,
             msg.responder_id
         );
@@ -261,12 +264,12 @@ impl Handler<Coordinator> for CentralDriver {
     type Result = ();
 
     fn handle(&mut self, msg: Coordinator, _ctx: &mut Context<Self>) -> Self::Result {
-        log::info!("{} is the new leader", msg.leader_id);
+        log::info!("[ELECTION] {} is the new leader", msg.leader_id);
 
         self.leader_id = Some(msg.leader_id);
 
         if self.im_leader() {
-            log::info!("Oh!, that is me");
+            log::info!("[ELECTION] Oh!, that is me");
         }
     }
 }
