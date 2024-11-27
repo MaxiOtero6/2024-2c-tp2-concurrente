@@ -1,5 +1,5 @@
 use std::{
-    error::Error,
+    collections::HashMap,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
@@ -17,7 +17,8 @@ use crate::concu_driver::central_driver::RemoveDriverConnection;
 
 use super::{
     central_driver::{
-        Alive, CentralDriver, Coordinator, Election, InsertDriverConnection, StartElection,
+        Alive, CanHandleTrip, CentralDriver, Coordinator, Election, RedirectNewTrip,
+        SetDriverPosition, StartElection,
     },
     json_parser::DriverMessages,
 };
@@ -32,7 +33,9 @@ pub struct DriverConnection {
     // ID de este driver
     id: u32,
     // ID del driver
-    driver_id: Option<u32>,
+    driver_id: u32,
+    //Guarda el ack recibido para cada pasajero
+    responses: HashMap<u32, Option<bool>>,
 }
 
 impl DriverConnection {
@@ -41,7 +44,7 @@ impl DriverConnection {
         self_driver_addr: Addr<CentralDriver>,
         wstream: Arc<Mutex<WriteHalf<TcpStream>>>,
         driver_addr: Option<SocketAddr>,
-        driver_id: Option<u32>,
+        driver_id: u32,
     ) -> Self {
         DriverConnection {
             id,
@@ -49,6 +52,7 @@ impl DriverConnection {
             driver_write_stream: wstream,
             driver_addr,
             driver_id,
+            responses: HashMap::new(),
         }
     }
 }
@@ -58,19 +62,18 @@ impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
         if let Ok(data) = msg {
             log::debug!("recv {}", data);
 
-            let _ = ctx
-                .address()
-                .try_send(RecvAll { data })
-                .inspect_err(|e| log::error!("{}", e.to_string()));
+            let _ = ctx.address().try_send(RecvAll { data }).inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            });
         }
     }
 
     fn finished(&mut self, ctx: &mut Self::Context) {
-        if let Some(did) = self.driver_id {
-            log::warn!("Broken pipe with driver {}", did);
-            self.central_driver
-                .do_send(RemoveDriverConnection { id: did });
-        }
+        // if let Some(did) = self.driver_id {
+        log::warn!("Broken pipe with driver {}", self.driver_id);
+        self.central_driver
+            .do_send(RemoveDriverConnection { id: self.driver_id });
+        // }
         // Election
         self.central_driver.do_send(StartElection {});
 
@@ -80,13 +83,6 @@ impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
 
 impl Actor for DriverConnection {
     type Context = Context<Self>;
-}
-
-#[derive(Message)]
-#[rtype(result = "u32")]
-struct LeaderStatus {
-    driver_ids: Vec<u32>,
-    msg_type: String,
 }
 
 #[derive(Message)]
@@ -104,14 +100,15 @@ impl Handler<SendAll> for DriverConnection {
         let w = self.driver_write_stream.clone();
         wrap_future::<_, Self>(async move {
             if let Ok(mut writer) = w.lock() {
-                let _ = writer
-                    .write_all(message.as_bytes())
-                    .await
-                    .inspect_err(|e| log::error!("{}", e.to_string()));
+                let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
                 let _ = writer
                     .flush()
                     .await
-                    .inspect_err(|e| log::error!("{}", e.to_string()))
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                    })
                     .inspect(|_| log::debug!("sent {}", message));
             }
         })
@@ -128,43 +125,108 @@ pub struct RecvAll {
 impl Handler<RecvAll> for DriverConnection {
     type Result = Result<(), String>;
 
-    fn handle(&mut self, msg: RecvAll, ctx: &mut Context<Self>) -> Self::Result {
-        let data = serde_json::from_str(&msg.data).map_err(|e| e.to_string())?;
+    fn handle(&mut self, msg: RecvAll, _ctx: &mut Context<Self>) -> Self::Result {
+        let data = serde_json::from_str(&msg.data).map_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            e.to_string()
+        })?;
 
         match data {
-            DriverMessages::RequestDriverId {} => {
-                let data = DriverMessages::ResponseDriverId { id: self.id };
-                let parsed_json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
-                ctx.address()
-                    .try_send(SendAll { data: parsed_json })
-                    .map_err(|e| e.to_string())?;
-            }
-            DriverMessages::ResponseDriverId { id } => {
-                self.driver_id = Some(id);
-                self.central_driver
-                    .try_send(InsertDriverConnection {
-                        id,
-                        addr: ctx.address(),
-                    })
-                    .map_err(|e| e.to_string())?;
-            }
             DriverMessages::Election { sender_id } => {
                 self.central_driver
                     .try_send(Election { sender_id })
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    })?;
             }
             DriverMessages::Alive { responder_id } => {
                 self.central_driver
                     .try_send(Alive { responder_id })
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    })?;
             }
             DriverMessages::Coordinator { leader_id } => {
                 self.central_driver
                     .try_send(Coordinator { leader_id })
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    })?;
             }
+            DriverMessages::NotifyPosition {
+                driver_id,
+                driver_position,
+            } => {
+                self.central_driver
+                    .try_send(SetDriverPosition {
+                        driver_id,
+                        driver_position,
+                    })
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    })?;
+            }
+            DriverMessages::CanHandleTrip {
+                passenger_id,
+                passenger_location,
+                destination,
+            } => {
+                self.central_driver
+                    .try_send(CanHandleTrip {
+                        passenger_id,
+                        source: passenger_location,
+                        destination,
+                    })
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    })?;
+            }
+            DriverMessages::CanHandleTripACK {
+                response,
+                passenger_id,
+            } => {
+                self.responses.insert(passenger_id, Some(response));
+            }
+            DriverMessages::TripRequest {
+                passenger_id,
+                passenger_location,
+                destination,
+            } => self
+                .central_driver
+                .try_send(RedirectNewTrip {
+                    passenger_id,
+                    source: passenger_location,
+                    destination,
+                })
+                .map_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    e.to_string()
+                })?,
         }
 
         Ok(())
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Option<bool>")]
+pub struct CheckACK {
+    pub passenger_id: u32,
+}
+
+impl Handler<CheckACK> for DriverConnection {
+    type Result = Option<bool>;
+
+    fn handle(&mut self, msg: CheckACK, _ctx: &mut Context<Self>) -> Self::Result {
+        if let Some(res) = self.responses.remove(&msg.passenger_id) {
+            return res;
+        }
+
+        None
     }
 }

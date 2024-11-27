@@ -7,11 +7,9 @@ use tokio::{
 };
 use tokio_stream::wrappers::LinesStream;
 
-use super::{
-    central_driver::CentralDriver,
-    consts::{HOST, PAYMENT_PORT},
-};
+use super::central_driver::CentralDriver;
 
+use common::utils::consts::{HOST, PAYMENT_PORT};
 pub struct PaymentConnection {
     // Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
@@ -38,9 +36,10 @@ impl PaymentConnection {
 
         let addr = format!("{}:{}", HOST, PAYMENT_PORT);
 
-        let socket = TcpStream::connect(addr.clone())
-            .await
-            .map_err(|e| e.to_string())?;
+        let socket = TcpStream::connect(addr.clone()).await.map_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            e.to_string()
+        })?;
 
         let (r, w) = split(socket);
 

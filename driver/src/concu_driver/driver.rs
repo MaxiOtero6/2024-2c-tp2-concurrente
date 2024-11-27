@@ -28,7 +28,10 @@ async fn connect_all(id: u32) -> Result<(), Box<dyn Error>> {
 
     let (drivers_conn_join,) = join!(drivers_conn_task);
 
-    drivers_conn_join.map_err(|e| e.to_string())??;
+    drivers_conn_join.map_err(|e| {
+        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+        e.to_string()
+    })??;
 
     Ok(())
 }

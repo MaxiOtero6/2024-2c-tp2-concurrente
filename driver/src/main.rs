@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use driver::concu_driver::consts::LOG_LEVEL;
+use common::utils::consts::LOG_LEVEL;
 
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::builder()
