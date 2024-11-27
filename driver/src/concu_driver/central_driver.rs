@@ -25,7 +25,7 @@ pub struct CentralDriver {
     connection_with_drivers: HashMap<u32, Addr<DriverConnection>>, // 0...N
     // Posiciones de los demas drivers segun su id,
     // cobra sentido si este driver es lider
-    driver_positions: Arc<Mutex<HashMap<u32, Position>>>,
+    driver_positions: HashMap<u32, Position>,
     // Id del driver lider
     leader_id: Option<u32>,
     // Id del driver
@@ -43,7 +43,7 @@ impl CentralDriver {
         CentralDriver::create(|ctx| Self {
             id,
             leader_id: None,
-            driver_positions: Arc::new(Mutex::new(HashMap::new())),
+            driver_positions: HashMap::new(),
             connection_with_drivers: HashMap::new(),
             trip_handler: TripHandler::new(ctx.address()).start(),
             connection_with_payment: None,
@@ -112,12 +112,9 @@ impl Handler<SetDriverPosition> for CentralDriver {
     type Result = ();
 
     fn handle(&mut self, msg: SetDriverPosition, _ctx: &mut Context<Self>) -> Self::Result {
-        let lock = self.driver_positions.clone();
-
-        if let Ok(mut wlock) = lock.lock() {
-            log::debug!("Driver {} in {:?}", msg.driver_id, msg.driver_position);
-            wlock.insert(msg.driver_id, msg.driver_position);
-        };
+        log::debug!("Driver {} in {:?}", msg.driver_id, msg.driver_position);
+        self.driver_positions
+            .insert(msg.driver_id, msg.driver_position);
     }
 }
 
