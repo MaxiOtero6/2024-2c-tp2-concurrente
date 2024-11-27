@@ -22,4 +22,18 @@ pub enum DriverMessages {
         driver_id: u32,
         driver_position: Position,
     },
+    TripRequest {
+        passenger_id: u32,
+        passenger_location: Position,
+        destination: Position,
+    },
+    CanHandleTrip {
+        passenger_id: u32,
+        passenger_location: Position,
+        destination: Position,
+    },
+    CanHandleTripACK {
+        response: bool,
+        passenger_id: u32,
+    },
 }
