@@ -1,12 +1,21 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
+use std::{collections::HashMap, time::Duration};
+
+use actix::{
+    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
+    Message, SpawnHandle,
 };
-
-use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, SpawnHandle};
 use common::utils::position::Position;
+use rayon::{
+    iter::{IntoParallelIterator, ParallelIterator},
+    slice::ParallelSliceMut,
+};
+use tokio::time::sleep;
 
-use crate::concu_driver::{driver_connection::SendAll, json_parser::DriverMessages};
+use crate::concu_driver::{
+    consts::MAX_DISTANCE,
+    driver_connection::{CheckACK, SendAll},
+    json_parser::DriverMessages,
+};
 
 use super::{
     consts::ELECTION_TIMEOUT_DURATION, driver_connection::DriverConnection,
@@ -58,6 +67,100 @@ impl CentralDriver {
         }
 
         false
+    }
+
+    async fn find_driver(
+        driver_positions: &HashMap<u32, Position>,
+        id: &u32,
+        connection_with_drivers: &HashMap<u32, Addr<DriverConnection>>,
+        msg: &FindDriver,
+        trip_handler: &Addr<TripHandler>,
+    ) {
+        let mut nearby_drivers = driver_positions
+            .clone()
+            .into_par_iter()
+            .filter(|(_, v)| v.distance_to(&msg.source) <= MAX_DISTANCE)
+            .map(|(k, _)| k)
+            .collect::<Vec<u32>>();
+
+        nearby_drivers.par_sort();
+
+        log::debug!("nearby drivers: {:?}", nearby_drivers);
+
+        let parsed_data = serde_json::to_string(&DriverMessages::CanHandleTrip {
+            passenger_id: msg.passenger_id,
+            passenger_location: msg.source,
+            destination: msg.destination,
+        })
+        .inspect_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+        });
+
+        if let Ok(data) = &parsed_data {
+            for did in nearby_drivers {
+                log::debug!("Asking driver {}", did);
+                if did == *id {
+                    let res = trip_handler
+                        .send(super::handle_trip::CanHandleTrip {
+                            passenger_id: msg.passenger_id,
+                            passenger_location: msg.source,
+                            destination: msg.destination,
+                        })
+                        .await
+                        .map_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                            e.to_string()
+                        });
+
+                    if let Ok(value) = res {
+                        if value {
+                            log::info!(
+                                "Driver {} will take the trip for passenger {}",
+                                did,
+                                msg.passenger_id
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                if let Some(driver) = connection_with_drivers.get(&did) {
+                    let _ = driver
+                        .try_send(SendAll { data: data.clone() })
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        });
+
+                    sleep(Duration::from_millis(500)).await;
+
+                    let res = driver
+                        .send(CheckACK {
+                            passenger_id: msg.passenger_id,
+                        })
+                        .await
+                        .map_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                            e.to_string()
+                        });
+
+                    if let Ok(ack) = res {
+                        if let Some(value) = ack {
+                            if value {
+                                log::info!(
+                                    "Driver {} will take the trip for passenger {}",
+                                    did,
+                                    msg.passenger_id
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                log::debug!("Driver {} can not take the trip or did not answer", did)
+            }
+        }
+        // MAL FLA PASAJERO
     }
 }
 
@@ -328,5 +431,150 @@ impl Handler<Coordinator> for CentralDriver {
         if self.im_leader() {
             log::info!("[ELECTION] Oh!, that is me");
         }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<(), String>")]
+pub struct RedirectNewTrip {
+    pub passenger_id: u32,
+    pub source: Position,
+    pub destination: Position,
+}
+
+impl Handler<RedirectNewTrip> for CentralDriver {
+    type Result = Result<(), String>;
+
+    fn handle(&mut self, msg: RedirectNewTrip, ctx: &mut Context<Self>) -> Self::Result {
+        log::debug!(
+            "[TRIP] Redirect to leader a trip for passenger {}",
+            msg.passenger_id
+        );
+
+        if self.im_leader() {
+            ctx.address()
+                .try_send(FindDriver {
+                    passenger_id: msg.passenger_id,
+                    source: msg.source,
+                    destination: msg.destination,
+                })
+                .map_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    e.to_string()
+                })?;
+
+            return Ok(());
+        }
+
+        if let Some(lid) = &self.leader_id {
+            let leader_addr = self.connection_with_drivers.get(lid);
+
+            if let Some(laddr) = leader_addr {
+                let data = serde_json::to_string(&DriverMessages::TripRequest {
+                    passenger_id: msg.passenger_id,
+                    passenger_location: msg.source,
+                    destination: msg.destination,
+                })
+                .map_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    e.to_string()
+                })?;
+
+                laddr.try_send(SendAll { data }).map_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    e.to_string()
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct FindDriver {
+    pub passenger_id: u32,
+    pub source: Position,
+    pub destination: Position,
+}
+
+impl Handler<FindDriver> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: FindDriver, ctx: &mut Context<Self>) -> Self::Result {
+        log::debug!("[TRIP] Finding a driver for passenger {}", msg.passenger_id);
+
+        let driver_positions = self.driver_positions.clone();
+        let id = self.id.clone();
+        let connection_with_drivers = self.connection_with_drivers.clone();
+        let trip_handler = self.trip_handler.clone();
+
+        wrap_future::<_, Self>(async move {
+            CentralDriver::find_driver(
+                &driver_positions,
+                &id,
+                &connection_with_drivers,
+                &msg,
+                &trip_handler,
+            )
+            .await;
+        })
+        .spawn(ctx);
+
+        ()
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<(), String>")]
+pub struct CanHandleTrip {
+    pub passenger_id: u32,
+    pub source: Position,
+    pub destination: Position,
+}
+
+impl Handler<CanHandleTrip> for CentralDriver {
+    type Result = Result<(), String>;
+
+    fn handle(&mut self, msg: CanHandleTrip, ctx: &mut Context<Self>) -> Self::Result {
+        let leader_id = self.leader_id.clone();
+        let connection_with_drivers = self.connection_with_drivers.clone();
+        let trip_handler = self.trip_handler.clone();
+
+        wrap_future::<_, Self>(async move {
+            let res = trip_handler
+                .send(super::handle_trip::CanHandleTrip {
+                    passenger_id: msg.passenger_id,
+                    passenger_location: msg.source,
+                    destination: msg.destination,
+                })
+                .await
+                .inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                })
+                .unwrap_or(false);
+
+            if let Some(lid) = &leader_id {
+                if let Some(leader) = connection_with_drivers.get(lid) {
+                    let parsed_data = serde_json::to_string(&DriverMessages::CanHandleTripACK {
+                        response: res,
+                        passenger_id: msg.passenger_id,
+                    })
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    });
+
+                    if let Ok(data) = parsed_data {
+                        let _ = leader.try_send(SendAll { data }).inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        });
+                    }
+                }
+            }
+        })
+        .spawn(ctx);
+
+        Ok(())
     }
 }
