@@ -79,6 +79,7 @@ impl Handler<TripStart> for TripHandler {
 
         let central_driver = self.central_driver.clone();
         let current_pos = Arc::clone(&self.current_location);
+        let self_addr = ctx.address().clone();
 
         wrap_future::<_, Self>(async move {
             let mut lock = current_pos.lock().await;
@@ -112,8 +113,12 @@ impl Handler<TripStart> for TripHandler {
                 sleep(Duration::from_millis(750)).await;
             }
 
-            log::info!("[TRIP] Trip for passenger {} completed", msg.passenger_id);
+            log::info!(
+                "[TRIP] Arrived at destination for passenger {}",
+                msg.passenger_id
+            );
 
+            self_addr.do_send(ClearPassenger {});
             // NOTIFY PAYMENT
         })
         .spawn(ctx);
@@ -121,7 +126,7 @@ impl Handler<TripStart> for TripHandler {
 }
 
 #[derive(Message)]
-#[rtype(result = bool)]
+#[rtype(result = "bool")]
 pub struct CanHandleTrip {
     pub passenger_id: u32,
     pub passenger_location: Position,
@@ -148,5 +153,17 @@ impl Handler<CanHandleTrip> for TripHandler {
         }
 
         response
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct ClearPassenger {}
+impl Handler<ClearPassenger> for TripHandler {
+    type Result = ();
+
+    fn handle(&mut self, _msg: ClearPassenger, _ctx: &mut Context<Self>) -> Self::Result {
+        log::info!("Now i'm ready for another trip!");
+        self.passenger_id = None;
     }
 }
