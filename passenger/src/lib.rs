@@ -4,7 +4,7 @@ use concu_passenger::passenger::request_trip;
 
 pub mod concu_passenger;
 
-pub fn run() -> Result<(), Box<dyn Error>> {
+pub fn run() -> Result<(), Box<dyn Error + Sinc + Send>> {
     let argv: Vec<String> = std::env::args().collect();
 
     // if argv.len() != 2 {
