@@ -12,7 +12,7 @@ use rayon::{
 use tokio::time::sleep;
 
 use crate::concu_driver::{
-    consts::MAX_DISTANCE,
+    consts::{MAX_DISTANCE, TAKE_TRIP_TIMEOUT_MS},
     driver_connection::{CheckACK, SendAll},
     json_parser::DriverMessages,
 };
@@ -131,7 +131,7 @@ impl CentralDriver {
                             log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                         });
 
-                    sleep(Duration::from_millis(500)).await;
+                    sleep(TAKE_TRIP_TIMEOUT_MS).await;
 
                     let res = driver
                         .send(CheckACK {
