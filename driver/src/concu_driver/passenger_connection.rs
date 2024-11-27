@@ -7,6 +7,7 @@ use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, ActorContext, Addr, AsyncContext, Context,
     Handler, Message, StreamHandler,
 };
+use common::utils::json_parser::TripMessages;
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
@@ -14,7 +15,7 @@ use tokio::{
 
 use crate::concu_driver::central_driver::RemovePassengerConnection;
 
-use super::central_driver::CentralDriver;
+use super::central_driver::{CentralDriver, RedirectNewTrip};
 
 pub struct PassengerConnection {
     // Direccion del actor CentralDriver
@@ -117,16 +118,27 @@ impl Handler<RecvAll> for PassengerConnection {
         })?;
 
         match data {
-            _ => (),
+            TripMessages::TripRequest {
+                source,
+                destination,
+            } => self
+                .central_driver
+                .try_send(RedirectNewTrip {
+                    passenger_id: self.passenger_id,
+                    source,
+                    destination,
+                })
+                .map_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    e.to_string()
+                })?,
+
+            TripMessages::TripResponse {
+                success: _,
+                detail: _,
+            } => log::error!("Why i'm receiving a trip response?"),
         }
 
         Ok(())
     }
-}
-
-#[derive(Message)]
-#[rtype(result = "()")]
-struct TripStatus {
-    log: String,
-    msg_type: String,
 }
