@@ -1,8 +1,6 @@
-use crate::concu_payment::json_parser::PaymentResponses;
 use crate::concu_payment::{
-    consts::{HOST, PORT},
-    json_parser::PaymentMessages,
-};
+    consts::{HOST, PORT}, };
+use common::utils::json_parser::{PaymentMessages, PaymentResponses};
 use rand::Rng;
 use std::error::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

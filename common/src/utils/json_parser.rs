@@ -7,6 +7,13 @@ pub enum CommonMessages {
     Identification { id: u32, type_: char },
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub enum TripStatus {
+    Success,
+    DriverSelected,
+    Error,
+}
+
 #[derive(Serialize, Deserialize)]
 pub enum TripMessages {
     TripRequest {
@@ -14,7 +21,19 @@ pub enum TripMessages {
         destination: Position,
     },
     TripResponse {
-        success: bool,
-        detail: String
-    }
+        status: TripStatus,
+        detail: String,
+    },
+}
+
+#[derive(Deserialize, Serialize)]
+pub enum PaymentMessages {
+    AuthPayment { passenger_id: u32 },
+    CollectPayment { driver_id: u32, passenger_id: u32 },
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum PaymentResponses {
+    AuthPayment { passenger_id: u32, response: bool },
+    CollectPayment { passenger_id: u32, response: bool },
 }
