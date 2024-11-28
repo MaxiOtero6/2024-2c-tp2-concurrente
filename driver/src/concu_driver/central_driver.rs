@@ -89,7 +89,11 @@ impl CentralDriver {
 
         nearby_drivers.par_sort();
 
-        log::debug!("nearby drivers: {:?}", nearby_drivers);
+        log::debug!(
+            "[TRIP] Nearby drivers for passenger {}: {:?}",
+            msg.passenger_id,
+            nearby_drivers
+        );
 
         let parsed_data = serde_json::to_string(&DriverMessages::CanHandleTrip {
             passenger_id: msg.passenger_id,
@@ -103,7 +107,11 @@ impl CentralDriver {
 
         if let Ok(data) = &parsed_data {
             for did in nearby_drivers {
-                log::debug!("Asking driver {}", did);
+                log::info!(
+                    "[TRIP] Asking driver {} if it will take the trip for passenger {}",
+                    did,
+                    msg.passenger_id
+                );
                 if did == *id {
                     let res = trip_handler
                         .send(super::handle_trip::CanHandleTrip {
@@ -121,7 +129,7 @@ impl CentralDriver {
                     if let Ok(value) = res {
                         if value {
                             log::info!(
-                                "Driver {} will take the trip for passenger {}",
+                                "[TRIP] Driver {} will take the trip for passenger {}",
                                 did,
                                 msg.passenger_id
                             );
@@ -172,7 +180,7 @@ impl CentralDriver {
                         if let Some(value) = ack {
                             if value {
                                 log::info!(
-                                    "Driver {} will take the trip for passenger {}",
+                                    "[TRIP] Driver {} will take the trip for passenger {}",
                                     did,
                                     msg.passenger_id
                                 );
@@ -201,7 +209,7 @@ impl CentralDriver {
                     }
                 }
 
-                log::debug!("Driver {} can not take the trip or did not answer", did)
+                log::info!("[TRIP] Driver {} can not take the trip or did not answer", did)
             }
         }
 
