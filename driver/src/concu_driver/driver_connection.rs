@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, ActorContext, Addr, AsyncContext, Context,
@@ -11,6 +7,7 @@ use actix::{
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
+    sync::Mutex,
 };
 
 use crate::concu_driver::central_driver::RemoveDriverConnection;
@@ -42,14 +39,14 @@ impl DriverConnection {
     pub fn new(
         id: u32,
         self_driver_addr: Addr<CentralDriver>,
-        wstream: Arc<Mutex<WriteHalf<TcpStream>>>,
+        wstream: WriteHalf<TcpStream>,
         driver_addr: Option<SocketAddr>,
         driver_id: u32,
     ) -> Self {
         DriverConnection {
             id,
             central_driver: self_driver_addr,
-            driver_write_stream: wstream,
+            driver_write_stream: Arc::new(Mutex::new(wstream)),
             driver_addr,
             driver_id,
             responses: HashMap::new(),
@@ -99,18 +96,19 @@ impl Handler<SendAll> for DriverConnection {
 
         let w = self.driver_write_stream.clone();
         wrap_future::<_, Self>(async move {
-            if let Ok(mut writer) = w.lock() {
-                let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
+            let mut writer = w.lock().await;
+
+            let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            });
+
+            let _ = writer
+                .flush()
+                .await
+                .inspect_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
-                let _ = writer
-                    .flush()
-                    .await
-                    .inspect_err(|e| {
-                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                    })
-                    .inspect(|_| log::debug!("sent {}", message));
-            }
+                })
+                .inspect(|_| log::debug!("sent {}", message));
         })
         .spawn(ctx);
     }

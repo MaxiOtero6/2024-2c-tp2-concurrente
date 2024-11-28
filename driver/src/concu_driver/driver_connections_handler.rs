@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use actix::{Actor, Addr, AsyncContext};
 use common::utils::consts::{MAX_DRIVER_PORT, MIN_DRIVER_PORT};
 use tokio::{
@@ -149,7 +147,7 @@ impl DriverConnectionsHandler {
             DriverConnection::new(
                 self_id,
                 central_driver_addr.clone(),
-                Arc::new(Mutex::new(w)),
+                w,
                 driver_addr,
                 driver_id,
             )
