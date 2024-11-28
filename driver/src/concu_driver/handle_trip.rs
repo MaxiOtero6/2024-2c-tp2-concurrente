@@ -61,7 +61,7 @@ impl Actor for TripHandler {
 impl TripHandler {
     pub fn new(central_driver: Addr<CentralDriver>, self_id: u32) -> Self {
         let pos = match std::env::var("TEST") {
-            Ok(_) => Position::new(self_id * 10, self_id * 10),
+            Ok(_) => Position::new(self_id * 5, self_id * 5),
             Err(_) => Position::random(),
         };
 
