@@ -14,17 +14,22 @@ use crate::concu_passenger::utils::TripData;
 use common::utils::consts::{HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT, PAYMENT_PORT};
 use common::utils::json_parser::{PaymentMessages, PaymentResponses};
 
-#[tokio::main]
-pub async fn validate_credit_card(id: u32) -> Result<(), Box<dyn Error>> {
+async fn validate_credit_card(id: u32) -> Result<(), Box<dyn Error>> {
     validate(id).await?;
+    Ok(())
+}
+async fn request_trip(trip_data: TripData) -> Result<(), Box<dyn Error>> {
+    request(trip_data).await?;
     Ok(())
 }
 
 #[tokio::main]
-pub async fn request_trip(trip_data: TripData) -> Result<(), Box<dyn Error>> {
-    request(trip_data).await?;
+pub(crate) async fn handle_complete_trip(trip_data: TripData) -> Result<(), Box<dyn Error>> {
+    validate_credit_card(trip_data.id).await?;
+    request_trip(trip_data).await?;
     Ok(())
 }
+
 
 async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     let mut ports: Vec<u32> = (MIN_DRIVER_PORT..=MAX_DRIVER_PORT).collect();
