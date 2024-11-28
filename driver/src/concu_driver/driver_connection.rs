@@ -15,7 +15,7 @@ use crate::concu_driver::central_driver::RemoveDriverConnection;
 use super::{
     central_driver::{
         Alive, CanHandleTrip, CentralDriver, Coordinator, Election, RedirectNewTrip,
-        SetDriverPosition, StartElection,
+        SetDriverPosition, StartElection, TripResponse,
     },
     json_parser::DriverMessages,
 };
@@ -194,12 +194,29 @@ impl Handler<RecvAll> for DriverConnection {
                 passenger_id,
                 passenger_location,
                 destination,
+                first_contact_driver,
             } => self
                 .central_driver
                 .try_send(RedirectNewTrip {
                     passenger_id,
                     source: passenger_location,
                     destination,
+                    first_contact_driver: Some(first_contact_driver),
+                })
+                .map_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    e.to_string()
+                })?,
+            DriverMessages::TripStatus {
+                passenger_id,
+                status,
+                detail,
+            } => self
+                .central_driver
+                .try_send(TripResponse {
+                    passenger_id,
+                    status,
+                    detail,
                 })
                 .map_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());

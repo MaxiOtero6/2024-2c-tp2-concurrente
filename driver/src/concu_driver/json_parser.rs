@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use common::utils::position::Position;
+use common::utils::{json_parser::TripStatus, position::Position};
 
 #[derive(Serialize, Deserialize)]
 pub enum CommonMessages {
@@ -26,6 +26,7 @@ pub enum DriverMessages {
         passenger_id: u32,
         passenger_location: Position,
         destination: Position,
+        first_contact_driver: u32,
     },
     CanHandleTrip {
         passenger_id: u32,
@@ -35,5 +36,10 @@ pub enum DriverMessages {
     CanHandleTripACK {
         response: bool,
         passenger_id: u32,
+    },
+    TripStatus {
+        passenger_id: u32,
+        status: TripStatus,
+        detail: String,
     },
 }

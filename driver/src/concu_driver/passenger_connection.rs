@@ -126,6 +126,7 @@ impl Handler<RecvAll> for PassengerConnection {
                     passenger_id: self.passenger_id,
                     source,
                     destination,
+                    first_contact_driver: None,
                 })
                 .map_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
@@ -133,7 +134,7 @@ impl Handler<RecvAll> for PassengerConnection {
                 })?,
 
             TripMessages::TripResponse {
-                success: _,
+                status: _,
                 detail: _,
             } => log::error!("Why i'm receiving a trip response?"),
         }

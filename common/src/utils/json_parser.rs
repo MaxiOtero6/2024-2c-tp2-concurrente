@@ -2,6 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use super::position::Position;
 
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub enum TripStatus {
+    Success,
+    DriverSelected,
+    Error,
+}
+
 #[derive(Serialize, Deserialize)]
 pub enum CommonMessages {
     Identification { id: u32, type_: char },
@@ -14,7 +21,7 @@ pub enum TripMessages {
         destination: Position,
     },
     TripResponse {
-        success: bool,
-        detail: String
-    }
+        status: TripStatus,
+        detail: String,
+    },
 }
