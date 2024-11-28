@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
 use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, ActorContext, Addr, AsyncContext, Context,
@@ -20,8 +20,6 @@ pub struct PassengerConnection {
     central_driver: Addr<CentralDriver>,
     // Stream para enviar al passenger
     passenger_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
-    // Direccion del stream del passenger
-    passenger_addr: Option<SocketAddr>,
     // ID del pasajero
     passenger_id: u32,
 }
@@ -30,13 +28,11 @@ impl PassengerConnection {
     pub fn new(
         central_driver: Addr<CentralDriver>,
         write_stream: WriteHalf<TcpStream>,
-        passenger_addr: Option<SocketAddr>,
         passenger_id: u32,
     ) -> Self {
         Self {
             central_driver,
             passenger_write_stream: Arc::new(Mutex::new(write_stream)),
-            passenger_addr,
             passenger_id,
         }
     }

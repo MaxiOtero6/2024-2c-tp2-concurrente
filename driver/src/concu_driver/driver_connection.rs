@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, ActorContext, Addr, AsyncContext, Context,
@@ -25,10 +25,6 @@ pub struct DriverConnection {
     central_driver: Addr<CentralDriver>,
     // Stream para enviar al driver
     driver_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
-    // Direccion del stream del driver
-    driver_addr: Option<SocketAddr>,
-    // ID de este driver
-    id: u32,
     // ID del driver
     driver_id: u32,
     //Guarda el ack recibido para cada pasajero
@@ -37,17 +33,13 @@ pub struct DriverConnection {
 
 impl DriverConnection {
     pub fn new(
-        id: u32,
         self_driver_addr: Addr<CentralDriver>,
         wstream: WriteHalf<TcpStream>,
-        driver_addr: Option<SocketAddr>,
         driver_id: u32,
     ) -> Self {
         DriverConnection {
-            id,
             central_driver: self_driver_addr,
             driver_write_stream: Arc::new(Mutex::new(wstream)),
-            driver_addr,
             driver_id,
             responses: HashMap::new(),
         }
