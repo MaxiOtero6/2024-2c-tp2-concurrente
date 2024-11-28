@@ -32,11 +32,15 @@ impl Actor for TripHandler {
 
         ctx.spawn({
             let position_lock = Arc::clone(&self.current_location);
+            let test_env_var = std::env::var("TEST");
             async move {
                 loop {
                     let mut lock = position_lock.lock().await;
                     // Simulate position change
-                    (*lock).simulate();
+                    match test_env_var {
+                        Ok(_) => (),
+                        Err(_) => (*lock).simulate(),
+                    }
 
                     let _ = recipient
                         .try_send(NotifyPositionToLeader {
@@ -55,10 +59,15 @@ impl Actor for TripHandler {
 }
 
 impl TripHandler {
-    pub fn new(central_driver: Addr<CentralDriver>) -> Self {
+    pub fn new(central_driver: Addr<CentralDriver>, self_id: u32) -> Self {
+        let pos = match std::env::var("TEST") {
+            Ok(_) => Position::new(self_id * 10, self_id * 10),
+            Err(_) => Position::random(),
+        };
+
         Self {
             central_driver,
-            current_location: Arc::new(Mutex::new(Position::random())),
+            current_location: Arc::new(Mutex::new(pos)),
             passenger_id: None,
         }
     }

@@ -57,7 +57,7 @@ impl CentralDriver {
             leader_id: None,
             driver_positions: HashMap::new(),
             connection_with_drivers: HashMap::new(),
-            trip_handler: TripHandler::new(ctx.address()).start(),
+            trip_handler: TripHandler::new(ctx.address(), id).start(),
             connection_with_payment: None,
             awaiting_response_passengers: HashMap::new(),
             election_timeout: None,
