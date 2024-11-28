@@ -29,7 +29,8 @@ pub fn request_trip(trip_data: TripData) -> Result<(), Box<dyn Error>> {
 async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     let mut ports: Vec<u32> = (MIN_DRIVER_PORT..=MAX_DRIVER_PORT).collect();
     let mut rng = rand::thread_rng();
-
+    log::info!("Requesting trip");
+    
     while !ports.is_empty() {
         let index = rng.gen_range(0..ports.len());
         let addr = format!("{}:{}", HOST, ports.remove(index));
@@ -42,6 +43,9 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
             log::info!("Request sent!");
 
             wait_driver_responses(&mut socket).await?;
+        }else{
+            log::error!("Error connecting to driver server");
+            return Err("Error connecting to driver server".into());
         }
     }
     Ok(())
@@ -114,6 +118,7 @@ async fn send_trip_request(socket: &mut TcpStream) -> Result<(), Box<dyn Error>>
     socket.write_all((request + "\n").as_bytes()).await?;
     Ok(())
 }
+
 async fn send_identification(
     trip_data: &TripData,
     socket: &mut TcpStream,
@@ -133,8 +138,8 @@ async fn validate(id: u32) -> Result<(), Box<dyn Error>> {
     let addr = format!("{}:{}", HOST, payment_port);
 
     if let Ok(mut socket) = TcpStream::connect(addr.clone()).await {
+        
         log::info!("Connected to payment server");
-
         send_auth_message(&id, &mut socket).await?;
 
         let mut reader = BufReader::new(&mut socket);
@@ -168,12 +173,15 @@ async fn validate(id: u32) -> Result<(), Box<dyn Error>> {
                     log::info!("Credit card validated!");
                 } else {
                     log::error!("Credit card not validated!");
+                    return Err("Payment was rejected. Exiting the program.".into());
                 }
             }
             _ => {
                 log::error!("Invalid response");
+                return Err("Invalid response".into());
             }
         }
+        
     } else {
         log::error!("Error connecting to payment server");
     }

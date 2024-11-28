@@ -18,7 +18,7 @@ pub fn validate_args() -> Result<TripData, String> {
         let origin_y: u32 = captures[3].parse().expect("Invalid origin Y ");
         let destination_x:u32 = captures[4].parse().expect("Invalid destination X ");
         let destination_y:u32 = captures[5].parse().expect("Invalid destination Y ");
-        
+
         Ok(TripData {
             id,
             origin: Position::new(origin_x, origin_y),
