@@ -72,50 +72,6 @@ impl CentralDriver {
         false
     }
 
-    fn notify_passenger(
-        status: &TripStatus,
-        detail: &String,
-        msg: &FindDriver,
-        connection_with_drivers: &HashMap<u32, Addr<DriverConnection>>,
-        self_addr: &Addr<Self>,
-    ) {
-        let parsed_data = serde_json::to_string(&DriverMessages::TripStatus {
-            passenger_id: msg.passenger_id,
-            status: *status,
-            detail: detail.clone(),
-        })
-        .inspect_err(|e| {
-            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-        });
-
-        if let Ok(data) = parsed_data {
-            match msg.first_contact_driver {
-                Some(fcd) => {
-                    if let Some(d) = connection_with_drivers.get(&fcd) {
-                        let _ = d.try_send(SendAll { data }).inspect_err(|e| {
-                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                        });
-                    } else {
-                        log::error!("Where is driver {}", fcd)
-                    }
-                }
-                // Si first contact driver es None, significa que el pasajero se comunico con
-                // el lider para pedir un viaje
-                None => {
-                    let _ = self_addr
-                        .try_send(TripResponse {
-                            passenger_id: msg.passenger_id,
-                            status: *status,
-                            detail: detail.clone(),
-                        })
-                        .inspect_err(|e| {
-                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                        });
-                }
-            }
-        }
-    }
-
     async fn find_driver(
         driver_positions: &HashMap<u32, Position>,
         id: &u32,
@@ -139,6 +95,7 @@ impl CentralDriver {
             passenger_id: msg.passenger_id,
             passenger_location: msg.source,
             destination: msg.destination,
+            first_contact_driver: msg.first_contact_driver.unwrap_or(*id),
         })
         .inspect_err(|e| {
             log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
@@ -153,6 +110,7 @@ impl CentralDriver {
                             passenger_id: msg.passenger_id,
                             passenger_location: msg.source,
                             destination: msg.destination,
+                            first_contact_driver: msg.first_contact_driver,
                         })
                         .await
                         .map_err(|e| {
@@ -170,13 +128,21 @@ impl CentralDriver {
 
                             let detail = format!("Driver {} will take care of your trip", did);
 
-                            Self::notify_passenger(
-                                &TripStatus::DriverSelected,
-                                &detail,
-                                msg,
-                                connection_with_drivers,
-                                self_addr,
-                            );
+                            let _ = self_addr
+                                .try_send(RedirectTripResponse {
+                                    status: TripStatus::DriverSelected,
+                                    detail,
+                                    passenger_id: msg.passenger_id,
+                                    first_contact_driver: msg.first_contact_driver,
+                                })
+                                .inspect_err(|e| {
+                                    log::error!(
+                                        "{}:{}, {}",
+                                        std::file!(),
+                                        std::line!(),
+                                        e.to_string()
+                                    );
+                                });
 
                             return;
                         }
@@ -213,13 +179,21 @@ impl CentralDriver {
 
                                 let detail = format!("Driver {} will take care of your trip", did);
 
-                                Self::notify_passenger(
-                                    &TripStatus::DriverSelected,
-                                    &detail,
-                                    msg,
-                                    connection_with_drivers,
-                                    self_addr,
-                                );
+                                let _ = self_addr
+                                    .try_send(RedirectTripResponse {
+                                        status: TripStatus::DriverSelected,
+                                        detail,
+                                        passenger_id: msg.passenger_id,
+                                        first_contact_driver: msg.first_contact_driver,
+                                    })
+                                    .inspect_err(|e| {
+                                        log::error!(
+                                            "{}:{}, {}",
+                                            std::file!(),
+                                            std::line!(),
+                                            e.to_string()
+                                        );
+                                    });
 
                                 return;
                             }
@@ -233,13 +207,16 @@ impl CentralDriver {
 
         let detail = format!("There are no drivers available near your location");
 
-        Self::notify_passenger(
-            &TripStatus::Error,
-            &detail,
-            msg,
-            connection_with_drivers,
-            self_addr,
-        );
+        let _ = self_addr
+            .try_send(RedirectTripResponse {
+                status: TripStatus::Error,
+                detail,
+                passenger_id: msg.passenger_id,
+                first_contact_driver: msg.first_contact_driver,
+            })
+            .inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            });
     }
 }
 
@@ -617,6 +594,7 @@ pub struct CanHandleTrip {
     pub passenger_id: u32,
     pub source: Position,
     pub destination: Position,
+    pub first_contact_driver: Option<u32>,
 }
 
 impl Handler<CanHandleTrip> for CentralDriver {
@@ -633,6 +611,7 @@ impl Handler<CanHandleTrip> for CentralDriver {
                     passenger_id: msg.passenger_id,
                     passenger_location: msg.source,
                     destination: msg.destination,
+                    first_contact_driver: msg.first_contact_driver,
                 })
                 .await
                 .inspect_err(|e| {
@@ -691,6 +670,78 @@ impl Handler<TripResponse> for CentralDriver {
                     .inspect_err(|e| {
                         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                     });
+            }
+        }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct RedirectTripResponse {
+    pub status: TripStatus,
+    pub detail: String,
+    pub passenger_id: u32,
+    pub first_contact_driver: Option<u32>,
+}
+
+impl Handler<RedirectTripResponse> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: RedirectTripResponse, ctx: &mut Context<Self>) -> Self::Result {
+        let parsed_data = serde_json::to_string(&DriverMessages::TripStatus {
+            passenger_id: msg.passenger_id,
+            status: msg.status,
+            detail: msg.detail.clone(),
+        })
+        .inspect_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+        });
+
+        if let Ok(data) = parsed_data {
+            match msg.first_contact_driver {
+                Some(fcd) => {
+                    if let Some(d) = self.connection_with_drivers.get(&fcd) {
+                        let _ = d.try_send(SendAll { data }).inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        });
+                    } else {
+                        if fcd == self.id {
+                            let _ = ctx
+                                .address()
+                                .try_send(TripResponse {
+                                    passenger_id: msg.passenger_id,
+                                    status: msg.status,
+                                    detail: msg.detail,
+                                })
+                                .inspect_err(|e| {
+                                    log::error!(
+                                        "{}:{}, {}",
+                                        std::file!(),
+                                        std::line!(),
+                                        e.to_string()
+                                    );
+                                });
+
+                            return;
+                        }
+
+                        log::error!("Where is driver {}", fcd)
+                    }
+                }
+                // Si first contact driver es None, significa que el pasajero se comunico con
+                // el lider para pedir un viaje
+                None => {
+                    let _ = ctx
+                        .address()
+                        .try_send(TripResponse {
+                            passenger_id: msg.passenger_id,
+                            status: msg.status,
+                            detail: msg.detail,
+                        })
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        });
+                }
             }
         }
     }

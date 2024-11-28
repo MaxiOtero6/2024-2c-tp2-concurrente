@@ -172,12 +172,14 @@ impl Handler<RecvAll> for DriverConnection {
                 passenger_id,
                 passenger_location,
                 destination,
+                first_contact_driver,
             } => {
                 self.central_driver
                     .try_send(CanHandleTrip {
                         passenger_id,
                         source: passenger_location,
                         destination,
+                        first_contact_driver: Some(first_contact_driver),
                     })
                     .map_err(|e| {
                         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());

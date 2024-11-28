@@ -4,11 +4,11 @@ use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
     Message, WrapFuture,
 };
-use common::utils::position::Position;
+use common::utils::{json_parser::TripStatus, position::Position};
 use rand::Rng;
 use tokio::{sync::Mutex, time::sleep};
 
-use crate::concu_driver::consts::TAKE_TRIP_PROBABILTY;
+use crate::concu_driver::{central_driver::RedirectTripResponse, consts::TAKE_TRIP_PROBABILTY};
 
 use super::{
     central_driver::{CentralDriver, NotifyPositionToLeader},
@@ -70,11 +70,20 @@ struct TripStart {
     passenger_id: u32,
     passenger_location: Position,
     destination: Position,
+    first_contact_driver: Option<u32>,
 }
 impl Handler<TripStart> for TripHandler {
     type Result = ();
 
     fn handle(&mut self, msg: TripStart, ctx: &mut Context<Self>) -> Self::Result {
+        async fn go_to_pos(self_pos: &mut Position, destination: &Position) {
+            while self_pos.x != destination.x || self_pos.y != destination.y {
+                self_pos.go_to(&destination);
+                log::debug!("Current {:?} -> Destination {:?}", self_pos, destination);
+                sleep(Duration::from_millis(750)).await;
+            }
+        }
+
         self.passenger_id = Some(msg.passenger_id);
 
         let central_driver = self.central_driver.clone();
@@ -95,28 +104,30 @@ impl Handler<TripStart> for TripHandler {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
                 });
 
-            while (*lock).x != msg.passenger_location.x || (*lock).y != msg.passenger_location.y {
-                (*lock).go_to(&msg.passenger_location);
-                log::debug!(
-                    "Current {:?} -> Destination {:?}",
-                    *lock,
-                    msg.passenger_location
-                );
-                sleep(Duration::from_millis(750)).await;
-            }
+            go_to_pos(&mut (*lock), &msg.passenger_location).await;
 
             log::info!("[TRIP] Passenger {} picked up", msg.passenger_id);
 
-            while (*lock).x != msg.destination.x || (*lock).y != msg.destination.y {
-                (*lock).go_to(&msg.destination);
-                log::debug!("Current {:?} -> Destination {:?}", *lock, msg.destination);
-                sleep(Duration::from_millis(750)).await;
-            }
+            go_to_pos(&mut (*lock), &msg.destination).await;
 
             log::info!(
                 "[TRIP] Arrived at destination for passenger {}",
                 msg.passenger_id
             );
+
+            let detail =
+                format!("We have arrived at our destination, we hope you enjoyed the trip");
+
+            let _ = central_driver
+                .try_send(RedirectTripResponse {
+                    passenger_id: msg.passenger_id,
+                    status: TripStatus::Success,
+                    detail,
+                    first_contact_driver: msg.first_contact_driver,
+                })
+                .inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
 
             self_addr.do_send(ClearPassenger {});
             // NOTIFY PAYMENT
@@ -131,6 +142,7 @@ pub struct CanHandleTrip {
     pub passenger_id: u32,
     pub passenger_location: Position,
     pub destination: Position,
+    pub first_contact_driver: Option<u32>,
 }
 
 impl Handler<CanHandleTrip> for TripHandler {
@@ -149,6 +161,7 @@ impl Handler<CanHandleTrip> for TripHandler {
                 passenger_id: msg.passenger_id,
                 passenger_location: msg.passenger_location,
                 destination: msg.destination,
+                first_contact_driver: msg.first_contact_driver,
             });
         }
 
