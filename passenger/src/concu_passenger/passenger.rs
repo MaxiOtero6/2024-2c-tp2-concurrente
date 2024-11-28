@@ -51,9 +51,9 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn wait_driver_responses(mut socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+async fn wait_driver_responses(socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
     loop {
-        let string_response = wait_driver_response(&mut socket).await;
+        let string_response = wait_driver_response(socket).await;
 
         let response = match parse_trip_response(string_response?) {
             Ok(value) => value,

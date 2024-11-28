@@ -11,7 +11,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         Ok(trip_data) => {
             log::info!("Validated trip data: {:?}", trip_data);
 
-            validate_credit_card(trip_data.id.clone())?;
+            validate_credit_card(trip_data.id)?;
             request_trip(trip_data)
 
         }
