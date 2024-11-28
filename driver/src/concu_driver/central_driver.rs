@@ -72,7 +72,7 @@ impl CentralDriver {
         false
     }
 
-    fn notify_driver(
+    fn notify_passenger(
         status: &TripStatus,
         detail: &String,
         msg: &FindDriver,
@@ -170,7 +170,7 @@ impl CentralDriver {
 
                             let detail = format!("Driver {} will take care of your trip", did);
 
-                            Self::notify_driver(
+                            Self::notify_passenger(
                                 &TripStatus::DriverSelected,
                                 &detail,
                                 msg,
@@ -178,7 +178,7 @@ impl CentralDriver {
                                 self_addr,
                             );
 
-                            break;
+                            return;
                         }
                     }
                 }
@@ -213,7 +213,7 @@ impl CentralDriver {
 
                                 let detail = format!("Driver {} will take care of your trip", did);
 
-                                Self::notify_driver(
+                                Self::notify_passenger(
                                     &TripStatus::DriverSelected,
                                     &detail,
                                     msg,
@@ -221,7 +221,7 @@ impl CentralDriver {
                                     self_addr,
                                 );
 
-                                break;
+                                return;
                             }
                         }
                     }
@@ -233,7 +233,7 @@ impl CentralDriver {
 
         let detail = format!("There are no drivers available near your location");
 
-        Self::notify_driver(
+        Self::notify_passenger(
             &TripStatus::Error,
             &detail,
             msg,
