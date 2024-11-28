@@ -1,6 +1,4 @@
 use std::{error::Error, thread::sleep, time::Duration};
-
-use actix::System;
 use rand::Rng;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -16,13 +14,15 @@ use crate::concu_passenger::utils::TripData;
 use common::utils::consts::{HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT, PAYMENT_PORT};
 use common::utils::json_parser::{PaymentMessages, PaymentResponses};
 
-pub fn validate_credit_card(id: u32) -> Result<(), Box<dyn Error>> {
-    System::new().block_on(validate(id))?;
+#[tokio::main]
+pub async fn validate_credit_card(id: u32) -> Result<(), Box<dyn Error>> {
+    validate(id).await?;
     Ok(())
 }
 
-pub fn request_trip(trip_data: TripData) -> Result<(), Box<dyn Error>> {
-    System::new().block_on(request(trip_data))?;
+#[tokio::main]
+pub async fn request_trip(trip_data: TripData) -> Result<(), Box<dyn Error>> {
+    request(trip_data).await?;
     Ok(())
 }
 
