@@ -26,13 +26,11 @@ pub enum DriverMessages {
         passenger_id: u32,
         passenger_location: Position,
         destination: Position,
-        first_contact_driver: u32,
     },
     CanHandleTrip {
         passenger_id: u32,
         passenger_location: Position,
         destination: Position,
-        first_contact_driver: u32,
     },
     CanHandleTripACK {
         response: bool,

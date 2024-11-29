@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
@@ -12,7 +12,7 @@ use rayon::{
     iter::{IntoParallelIterator, ParallelIterator},
     slice::ParallelSliceMut,
 };
-use tokio::time::sleep;
+use tokio::{sync::Mutex, time::sleep};
 
 use crate::concu_driver::{
     consts::{MAX_DISTANCE, TAKE_TRIP_TIMEOUT_MS},
@@ -30,7 +30,7 @@ pub struct CentralDriver {
     // Direccion del actor TripHandler
     trip_handler: Addr<TripHandler>,
     // Direccion del actor PassengerConnection
-    awaiting_response_passengers: HashMap<u32, Addr<PassengerConnection>>,
+    awaiting_response_passengers: Arc<Mutex<HashMap<u32, Addr<PassengerConnection>>>>,
     // Direccion del actor PaymentConnection
     connection_with_payment: Option<Addr<PaymentConnection>>,
     // Direcciones de los drivers segun su id
@@ -59,7 +59,7 @@ impl CentralDriver {
             connection_with_drivers: HashMap::new(),
             trip_handler: TripHandler::new(ctx.address(), id).start(),
             connection_with_payment: None,
-            awaiting_response_passengers: HashMap::new(),
+            awaiting_response_passengers: Arc::new(Mutex::new(HashMap::new())),
             election_timeout: None,
         })
     }
@@ -99,7 +99,6 @@ impl CentralDriver {
             passenger_id: msg.passenger_id,
             passenger_location: msg.source,
             destination: msg.destination,
-            first_contact_driver: msg.first_contact_driver.unwrap_or(*id),
         })
         .inspect_err(|e| {
             log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
@@ -118,7 +117,6 @@ impl CentralDriver {
                             passenger_id: msg.passenger_id,
                             passenger_location: msg.source,
                             destination: msg.destination,
-                            first_contact_driver: msg.first_contact_driver,
                         })
                         .await
                         .map_err(|e| {
@@ -137,11 +135,10 @@ impl CentralDriver {
                             let detail = format!("Driver {} will take care of your trip", did);
 
                             let _ = self_addr
-                                .try_send(RedirectTripResponse {
+                                .try_send(SendTripResponse {
                                     status: TripStatus::DriverSelected,
                                     detail,
                                     passenger_id: msg.passenger_id,
-                                    first_contact_driver: msg.first_contact_driver,
                                 })
                                 .inspect_err(|e| {
                                     log::error!(
@@ -188,11 +185,10 @@ impl CentralDriver {
                                 let detail = format!("Driver {} will take care of your trip", did);
 
                                 let _ = self_addr
-                                    .try_send(RedirectTripResponse {
+                                    .try_send(SendTripResponse {
                                         status: TripStatus::DriverSelected,
                                         detail,
                                         passenger_id: msg.passenger_id,
-                                        first_contact_driver: msg.first_contact_driver,
                                     })
                                     .inspect_err(|e| {
                                         log::error!(
@@ -209,22 +205,34 @@ impl CentralDriver {
                     }
                 }
 
-                log::info!("[TRIP] Driver {} can not take the trip or did not answer", did)
+                log::info!(
+                    "[TRIP] Driver {} can not take the trip or did not answer",
+                    did
+                )
             }
         }
 
         let detail = format!("There are no drivers available near your location");
 
-        let _ = self_addr
-            .try_send(RedirectTripResponse {
-                status: TripStatus::Error,
-                detail,
-                passenger_id: msg.passenger_id,
-                first_contact_driver: msg.first_contact_driver,
-            })
-            .inspect_err(|e| {
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-            });
+        match self_addr.try_send(ConnectWithPassenger {
+            passenger_id: msg.passenger_id,
+        }) {
+            Err(e) => {
+                log::error!("Can not connect with passenger {}", msg.passenger_id);
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            }
+            Ok(_) => {
+                let _ = self_addr
+                    .try_send(SendTripResponse {
+                        status: TripStatus::Error,
+                        detail,
+                        passenger_id: msg.passenger_id,
+                    })
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    });
+            }
+        }
     }
 }
 
@@ -310,9 +318,17 @@ pub struct InsertPassengerConnection {
 impl Handler<InsertPassengerConnection> for CentralDriver {
     type Result = ();
 
-    fn handle(&mut self, msg: InsertPassengerConnection, _ctx: &mut Context<Self>) -> Self::Result {
-        log::info!("Connecting with passenger {}", msg.id);
-        self.awaiting_response_passengers.insert(msg.id, msg.addr);
+    fn handle(&mut self, msg: InsertPassengerConnection, ctx: &mut Context<Self>) -> Self::Result {
+        let passengers = self.awaiting_response_passengers.clone();
+
+        wrap_future::<_, Self>(async move {
+            log::info!("Connecting with passenger {}", msg.id);
+
+            let mut lock = passengers.lock().await;
+
+            (*lock).insert(msg.id, msg.addr);
+        })
+        .spawn(ctx);
     }
 }
 
@@ -325,9 +341,17 @@ pub struct RemovePassengerConnection {
 impl Handler<RemovePassengerConnection> for CentralDriver {
     type Result = ();
 
-    fn handle(&mut self, msg: RemovePassengerConnection, _ctx: &mut Context<Self>) -> Self::Result {
-        log::info!("Disconnecting with passenger {}", msg.id);
-        self.awaiting_response_passengers.remove(&msg.id);
+    fn handle(&mut self, msg: RemovePassengerConnection, ctx: &mut Context<Self>) -> Self::Result {
+        let passengers = self.awaiting_response_passengers.clone();
+
+        wrap_future::<_, Self>(async move {
+            log::info!("Disconnecting with passenger {}", msg.id);
+
+            let mut lock = passengers.lock().await;
+
+            (*lock).remove(&msg.id);
+        })
+        .spawn(ctx);
     }
 }
 
@@ -504,7 +528,6 @@ pub struct RedirectNewTrip {
     pub passenger_id: u32,
     pub source: Position,
     pub destination: Position,
-    pub first_contact_driver: Option<u32>,
 }
 
 impl Handler<RedirectNewTrip> for CentralDriver {
@@ -522,7 +545,6 @@ impl Handler<RedirectNewTrip> for CentralDriver {
                     passenger_id: msg.passenger_id,
                     source: msg.source,
                     destination: msg.destination,
-                    first_contact_driver: msg.first_contact_driver,
                 })
                 .map_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
@@ -540,7 +562,6 @@ impl Handler<RedirectNewTrip> for CentralDriver {
                     passenger_id: msg.passenger_id,
                     passenger_location: msg.source,
                     destination: msg.destination,
-                    first_contact_driver: self.id,
                 })
                 .map_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
@@ -552,6 +573,36 @@ impl Handler<RedirectNewTrip> for CentralDriver {
                     e.to_string()
                 })?;
             }
+
+            let passengers = self.awaiting_response_passengers.clone();
+
+            wrap_future::<_, Self>(async move {
+                let lock = passengers.lock().await;
+
+                let passenger_addr = (*lock).get(&msg.passenger_id);
+
+                if let Some(paddr) = passenger_addr {
+                    let parsed_data = serde_json::to_string(&TripMessages::TripResponse {
+                        status: TripStatus::RequestDelivered,
+                        detail: "Your request has been delivered, a driver will pick you up soon"
+                            .to_string(),
+                    })
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    });
+
+                    if let Ok(data) = parsed_data {
+                        let _ = paddr
+                            .try_send(super::passenger_connection::SendAll { data })
+                            .map_err(|e| {
+                                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                                e.to_string()
+                            });
+                    }
+                }
+            })
+            .spawn(ctx);
         }
 
         Ok(())
@@ -564,7 +615,6 @@ pub struct FindDriver {
     pub passenger_id: u32,
     pub source: Position,
     pub destination: Position,
-    pub first_contact_driver: Option<u32>,
 }
 
 impl Handler<FindDriver> for CentralDriver {
@@ -602,7 +652,6 @@ pub struct CanHandleTrip {
     pub passenger_id: u32,
     pub source: Position,
     pub destination: Position,
-    pub first_contact_driver: Option<u32>,
 }
 
 impl Handler<CanHandleTrip> for CentralDriver {
@@ -619,7 +668,6 @@ impl Handler<CanHandleTrip> for CentralDriver {
                     passenger_id: msg.passenger_id,
                     passenger_location: msg.source,
                     destination: msg.destination,
-                    first_contact_driver: msg.first_contact_driver,
                 })
                 .await
                 .inspect_err(|e| {
@@ -662,40 +710,71 @@ pub struct TripResponse {
 impl Handler<TripResponse> for CentralDriver {
     type Result = ();
 
-    fn handle(&mut self, msg: TripResponse, _ctx: &mut Context<Self>) -> Self::Result {
-        if let Some(passenger) = self.awaiting_response_passengers.get(&msg.passenger_id) {
-            let parsed_data = serde_json::to_string(&TripMessages::TripResponse {
-                status: msg.status,
-                detail: msg.detail,
-            })
-            .inspect_err(|e| {
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-            });
+    fn handle(&mut self, msg: TripResponse, ctx: &mut Context<Self>) -> Self::Result {
+        let passengers = self.awaiting_response_passengers.clone();
 
-            if let Ok(data) = parsed_data {
-                let _ = passenger
-                    .try_send(super::passenger_connection::SendAll { data })
-                    .inspect_err(|e| {
-                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                    });
+        wrap_future::<_, Self>(async move {
+            let lock = passengers.lock().await;
+            if let Some(passenger) = (*lock).get(&msg.passenger_id) {
+                let parsed_data = serde_json::to_string(&TripMessages::TripResponse {
+                    status: msg.status,
+                    detail: msg.detail,
+                })
+                .inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                });
+
+                if let Ok(data) = parsed_data {
+                    let _ = passenger
+                        .try_send(super::passenger_connection::SendAll { data })
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        });
+                }
             }
-        }
+        })
+        .spawn(ctx);
     }
 }
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct RedirectTripResponse {
+pub struct ConnectWithPassenger {
+    pub passenger_id: u32,
+}
+
+impl Handler<ConnectWithPassenger> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: ConnectWithPassenger, ctx: &mut Context<Self>) -> Self::Result {
+        let self_addr = ctx.address().clone();
+
+        wrap_future::<_, Self>(async move {
+            let passenger_addr = PassengerConnection::connect(&self_addr, &msg.passenger_id).await;
+
+            if let Ok(addr) = passenger_addr {
+                let _ = self_addr.try_send(InsertPassengerConnection {
+                    id: msg.passenger_id,
+                    addr,
+                });
+            }
+        })
+        .spawn(ctx);
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct SendTripResponse {
     pub status: TripStatus,
     pub detail: String,
     pub passenger_id: u32,
-    pub first_contact_driver: Option<u32>,
 }
 
-impl Handler<RedirectTripResponse> for CentralDriver {
+impl Handler<SendTripResponse> for CentralDriver {
     type Result = ();
 
-    fn handle(&mut self, msg: RedirectTripResponse, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: SendTripResponse, ctx: &mut Context<Self>) -> Self::Result {
         let parsed_data = serde_json::to_string(&DriverMessages::TripStatus {
             passenger_id: msg.passenger_id,
             status: msg.status,
@@ -705,52 +784,21 @@ impl Handler<RedirectTripResponse> for CentralDriver {
             log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
         });
 
-        if let Ok(data) = parsed_data {
-            match msg.first_contact_driver {
-                Some(fcd) => {
-                    if let Some(d) = self.connection_with_drivers.get(&fcd) {
-                        let _ = d.try_send(SendAll { data }).inspect_err(|e| {
-                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                        });
-                    } else {
-                        if fcd == self.id {
-                            let _ = ctx
-                                .address()
-                                .try_send(TripResponse {
-                                    passenger_id: msg.passenger_id,
-                                    status: msg.status,
-                                    detail: msg.detail,
-                                })
-                                .inspect_err(|e| {
-                                    log::error!(
-                                        "{}:{}, {}",
-                                        std::file!(),
-                                        std::line!(),
-                                        e.to_string()
-                                    );
-                                });
+        let passengers = self.awaiting_response_passengers.clone();
 
-                            return;
-                        }
+        wrap_future::<_, Self>(async move {
+            let lock = passengers.lock().await;
 
-                        log::error!("Where is driver {}", fcd)
-                    }
-                }
-                // Si first contact driver es None, significa que el pasajero se comunico con
-                // el lider para pedir un viaje
-                None => {
-                    let _ = ctx
-                        .address()
-                        .try_send(TripResponse {
-                            passenger_id: msg.passenger_id,
-                            status: msg.status,
-                            detail: msg.detail,
-                        })
+            if let Ok(data) = parsed_data {
+                if let Some(passenger) = (*lock).get(&msg.passenger_id) {
+                    let _ = passenger
+                        .try_send(super::passenger_connection::SendAll { data })
                         .inspect_err(|e| {
                             log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                         });
                 }
             }
-        }
+        })
+        .spawn(ctx);
     }
 }

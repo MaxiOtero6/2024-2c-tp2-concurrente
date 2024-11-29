@@ -8,10 +8,10 @@ use common::utils::{json_parser::TripStatus, position::Position};
 use rand::Rng;
 use tokio::{sync::Mutex, time::sleep};
 
-use crate::concu_driver::{central_driver::RedirectTripResponse, consts::TAKE_TRIP_PROBABILTY};
+use crate::concu_driver::{central_driver::SendTripResponse, consts::TAKE_TRIP_PROBABILTY};
 
 use super::{
-    central_driver::{CentralDriver, NotifyPositionToLeader},
+    central_driver::{CentralDriver, ConnectWithPassenger, NotifyPositionToLeader},
     consts::POSITION_NOTIFICATION_INTERVAL,
 };
 
@@ -79,7 +79,6 @@ struct TripStart {
     passenger_id: u32,
     passenger_location: Position,
     destination: Position,
-    first_contact_driver: Option<u32>,
 }
 impl Handler<TripStart> for TripHandler {
     type Result = ();
@@ -128,11 +127,10 @@ impl Handler<TripStart> for TripHandler {
                 format!("We have arrived at our destination, we hope you enjoyed the trip");
 
             let _ = central_driver
-                .try_send(RedirectTripResponse {
+                .try_send(SendTripResponse {
                     passenger_id: msg.passenger_id,
                     status: TripStatus::Success,
                     detail,
-                    first_contact_driver: msg.first_contact_driver,
                 })
                 .inspect_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
@@ -151,7 +149,6 @@ pub struct CanHandleTrip {
     pub passenger_id: u32,
     pub passenger_location: Position,
     pub destination: Position,
-    pub first_contact_driver: Option<u32>,
 }
 
 impl Handler<CanHandleTrip> for TripHandler {
@@ -166,12 +163,16 @@ impl Handler<CanHandleTrip> for TripHandler {
         };
 
         if response {
-            ctx.notify(TripStart {
+            match self.central_driver.try_send(ConnectWithPassenger {
                 passenger_id: msg.passenger_id,
-                passenger_location: msg.passenger_location,
-                destination: msg.destination,
-                first_contact_driver: msg.first_contact_driver,
-            });
+            }) {
+                Ok(_) => ctx.notify(TripStart {
+                    passenger_id: msg.passenger_id,
+                    passenger_location: msg.passenger_location,
+                    destination: msg.destination,
+                }),
+                Err(_) => return false,
+            }
         }
 
         response

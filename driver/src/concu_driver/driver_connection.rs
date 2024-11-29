@@ -94,12 +94,9 @@ impl Handler<SendAll> for DriverConnection {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
             });
 
-            let _ = writer
-                .flush()
-                .await
-                .inspect_err(|e| {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
+            let _ = writer.flush().await.inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            });
 
             // log::debug!("sent {}", message)
         })
@@ -165,14 +162,12 @@ impl Handler<RecvAll> for DriverConnection {
                 passenger_id,
                 passenger_location,
                 destination,
-                first_contact_driver,
             } => {
                 self.central_driver
                     .try_send(CanHandleTrip {
                         passenger_id,
                         source: passenger_location,
                         destination,
-                        first_contact_driver: Some(first_contact_driver),
                     })
                     .map_err(|e| {
                         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
@@ -189,14 +184,12 @@ impl Handler<RecvAll> for DriverConnection {
                 passenger_id,
                 passenger_location,
                 destination,
-                first_contact_driver,
             } => self
                 .central_driver
                 .try_send(RedirectNewTrip {
                     passenger_id,
                     source: passenger_location,
                     destination,
-                    first_contact_driver: Some(first_contact_driver),
                 })
                 .map_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());

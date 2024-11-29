@@ -4,8 +4,9 @@ use super::position::Position;
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum TripStatus {
-    Success,
+    RequestDelivered,
     DriverSelected,
+    Success,
     Error,
 }
 

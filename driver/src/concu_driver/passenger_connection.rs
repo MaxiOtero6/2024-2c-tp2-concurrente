@@ -4,12 +4,16 @@ use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, ActorContext, Addr, AsyncContext, Context,
     Handler, Message, StreamHandler,
 };
-use common::utils::json_parser::TripMessages;
+use common::utils::{
+    consts::{HOST, MIN_PASSENGER_PORT},
+    json_parser::TripMessages,
+};
 use tokio::{
-    io::{AsyncWriteExt, WriteHalf},
+    io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHalf},
     net::TcpStream,
     sync::Mutex,
 };
+use tokio_stream::wrappers::LinesStream;
 
 use crate::concu_driver::central_driver::RemovePassengerConnection;
 
@@ -36,6 +40,32 @@ impl PassengerConnection {
             passenger_id,
         }
     }
+
+    pub async fn connect(
+        central_driver: &Addr<CentralDriver>,
+        passenger_id: &u32,
+    ) -> Result<Addr<Self>, String> {
+        // log::debug!("Trying to connect with passenger {}", passenger_id);
+
+        let addr = format!("{}:{}", HOST, MIN_PASSENGER_PORT + passenger_id);
+
+        match TcpStream::connect(addr).await {
+            Ok(socket) => {
+                let (r, w) = split(socket);
+
+                let passenger_conn = PassengerConnection::create(|ctx| {
+                    ctx.add_stream(LinesStream::new(BufReader::new(r).lines()));
+                    Self::new(central_driver.clone(), w, *passenger_id)
+                });
+
+                Ok(passenger_conn)
+            }
+            Err(e) => {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                Err(e.to_string())
+            }
+        }
+    }
 }
 
 impl Actor for PassengerConnection {
@@ -45,7 +75,7 @@ impl Actor for PassengerConnection {
 impl StreamHandler<Result<String, std::io::Error>> for PassengerConnection {
     fn handle(&mut self, msg: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(data) = msg {
-            // log::debug!("recv {}", data);
+            log::debug!("recv {}", data);
 
             let _ = ctx.address().try_send(RecvAll { data }).inspect_err(|e| {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
@@ -85,12 +115,9 @@ impl Handler<SendAll> for PassengerConnection {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
             });
 
-            let _ = writer
-                .flush()
-                .await
-                .inspect_err(|e| {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
+            let _ = writer.flush().await.inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            });
 
             // log::debug!("sent {}", message);
         })
@@ -123,7 +150,6 @@ impl Handler<RecvAll> for PassengerConnection {
                     passenger_id: self.passenger_id,
                     source,
                     destination,
-                    first_contact_driver: None,
                 })
                 .map_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
