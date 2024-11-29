@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use actix::{Actor, Addr, AsyncContext};
 use common::utils::consts::{MAX_DRIVER_PORT, MIN_DRIVER_PORT};
 use tokio::{
@@ -58,7 +56,7 @@ impl DriverConnectionsHandler {
                         format!("Error connecting with {}, reason: {}", addr, e.to_string())
                     })?;
 
-                Self::connect_with_driver(self_id, central_driver_addr, socket, driver_id).await?;
+                Self::connect_with_driver(central_driver_addr, socket, driver_id).await?;
             }
 
             driver_id += 1;
@@ -127,7 +125,7 @@ impl DriverConnectionsHandler {
 
             match response {
                 CommonMessages::Identification { id, type_ } => match type_ {
-                    'D' => Self::connect_with_driver(id, central_driver_addr, socket, id).await?,
+                    'D' => Self::connect_with_driver(central_driver_addr, socket, id).await?,
                     'P' => Self::connect_with_passenger(central_driver_addr, socket, id).await?,
                     _ => (),
                 },
@@ -136,21 +134,17 @@ impl DriverConnectionsHandler {
     }
 
     async fn connect_with_driver(
-        self_id: u32,
         central_driver_addr: &Addr<CentralDriver>,
         socket: TcpStream,
         driver_id: u32,
     ) -> Result<(), String> {
-        let driver_addr: Option<std::net::SocketAddr> = socket.peer_addr().ok();
         let (r, w) = split(socket);
 
         let driver_conn = DriverConnection::create(|ctx| {
             ctx.add_stream(LinesStream::new(BufReader::new(r).lines()));
             DriverConnection::new(
-                self_id,
                 central_driver_addr.clone(),
-                Arc::new(Mutex::new(w)),
-                driver_addr,
+                w,
                 driver_id,
             )
         });
@@ -171,12 +165,11 @@ impl DriverConnectionsHandler {
         socket: TcpStream,
         passenger_id: u32,
     ) -> Result<(), String> {
-        let passenger_addr: Option<std::net::SocketAddr> = socket.peer_addr().ok();
         let (r, w) = split(socket);
 
         let passenger_conn = PassengerConnection::create(|ctx| {
             ctx.add_stream(LinesStream::new(BufReader::new(r).lines()));
-            PassengerConnection::new(central_driver_addr.clone(), w, passenger_addr, passenger_id)
+            PassengerConnection::new(central_driver_addr.clone(), w, passenger_id)
         });
 
         central_driver_addr
