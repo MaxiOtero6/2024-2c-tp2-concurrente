@@ -1,19 +1,23 @@
 use std::error::Error;
-
-use concu_passenger::passenger::request_trip;
+use concu_passenger::input_handler;
+use concu_passenger::passenger::handle_complete_trip;
 
 pub mod concu_passenger;
 
-pub fn run() -> Result<(), Box<dyn Error + Sinc + Send>> {
-    let argv: Vec<String> = std::env::args().collect();
+pub fn run() -> Result<(), Box<dyn Error>> {
 
-    if argv.len() != 2 {
-        return Err("Wrong args, expected: <program> <passenger_id>".into());
+    match input_handler::validate_args() {
+        Ok(trip_data) => {
+            log::info!("Validated trip data: {:?}", trip_data);
+            handle_complete_trip(trip_data)?;
+            Ok(())
+
+        }
+        Err(error) => {
+            eprintln!("{}", error);
+            Err(Box::from(error))
+        }
     }
 
-    let passenger_id = argv[1]
-        .parse::<u32>()
-        .expect("Wrong passenger_id, value must be parseable to u32");
-
-    request_trip(passenger_id)
 }
+
