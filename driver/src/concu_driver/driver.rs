@@ -5,7 +5,7 @@ use tokio::join;
 
 use super::{
     central_driver::{CentralDriver, SetPaymentAddr},
-    driver_connections_handler::DriverConnectionsHandler,
+    connections_handler::DriverConnectionsHandler,
     payment_connection::PaymentConnection,
 };
 
