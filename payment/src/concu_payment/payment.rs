@@ -1,5 +1,4 @@
-use crate::concu_payment::{
-    consts::{HOST, PORT}, };
+use common::utils::consts::{HOST, PAYMENT_PORT};
 use common::utils::json_parser::{PaymentMessages, PaymentResponses};
 use rand::Rng;
 use std::error::Error;
@@ -14,7 +13,7 @@ pub(crate) async fn handle_payments() -> Result<(), Box<dyn Error>> {
 async fn handle() -> Result<(), Box<dyn Error>> {
     let mut auth_passengers = Vec::new();
 
-    let self_addr = format!("{}:{}", HOST, PORT);
+    let self_addr = format!("{}:{}", HOST, PAYMENT_PORT);
 
     log::info!("My addr is {}", self_addr);
 
@@ -47,11 +46,14 @@ async fn handle() -> Result<(), Box<dyn Error>> {
         let response: PaymentMessages = match serde_json::from_str(&str_response) {
             Ok(msg) => msg,
             Err(e) => {
-                log::error!("Failed to parse PaymentMessages: {}, str: {}", e, str_response);
+                log::error!(
+                    "Failed to parse PaymentMessages: {}, str: {}",
+                    e,
+                    str_response
+                );
                 continue;
             }
         };
-
 
         match response {
             PaymentMessages::AuthPayment { passenger_id } => {
@@ -68,79 +70,87 @@ async fn handle() -> Result<(), Box<dyn Error>> {
     }
 }
 
-async fn handle_collect_message(auth_passengers: &mut Vec<u32>, socket: &mut TcpStream, driver_id: u32, passenger_id: &u32) -> Result<(), Box<dyn Error>> {
-        let response_message = if auth_passengers.contains(passenger_id) {
-            log::debug!(
-                        "Driver {} collected payment from passenger {}",
-                        driver_id,
-                        passenger_id
-                    );
+async fn handle_collect_message(
+    auth_passengers: &mut Vec<u32>,
+    socket: &mut TcpStream,
+    driver_id: u32,
+    passenger_id: &u32,
+) -> Result<(), Box<dyn Error>> {
+    let response_message = if auth_passengers.contains(passenger_id) {
+        log::debug!(
+            "Driver {} collected payment from passenger {}",
+            driver_id,
+            passenger_id
+        );
 
-            PaymentResponses::CollectPayment {
-                passenger_id: *passenger_id,
-                response: true,
-            }
-        } else {
-            log::debug!(
-                        "Driver {} could not collect payment from passenger {}",
-                        driver_id,
-                        passenger_id
-                    );
+        PaymentResponses::CollectPayment {
+            passenger_id: *passenger_id,
+            response: true,
+        }
+    } else {
+        log::debug!(
+            "Driver {} could not collect payment from passenger {}",
+            driver_id,
+            passenger_id
+        );
 
-            PaymentResponses::CollectPayment {
-                passenger_id: *passenger_id,
-                response: false,
-            }
+        PaymentResponses::CollectPayment {
+            passenger_id: *passenger_id,
+            response: false,
+        }
+    };
+
+    let response_json = serialize_response_message(&response_message)?;
+    send_response(socket, response_json).await;
+    Ok(())
+}
+
+async fn handle_auth_message(
+    auth_passengers: &mut Vec<u32>,
+    socket: &mut TcpStream,
+    passenger_id: u32,
+) -> Result<(), Box<dyn Error>> {
+    let mut rng = rand::thread_rng();
+    let probability: bool = rng.gen_bool(0.7);
+
+    if probability {
+        auth_passengers.push(passenger_id);
+        log::debug!("Accepted payment from passenger {}", passenger_id);
+
+        let response_message = PaymentResponses::AuthPayment {
+            passenger_id,
+            response: true,
         };
 
         let response_json = serialize_response_message(&response_message)?;
         send_response(socket, response_json).await;
-        Ok(())
+    } else {
+        log::debug!("Rejected payment from passenger {}", passenger_id);
+
+        let response_message = PaymentResponses::AuthPayment {
+            passenger_id,
+            response: false,
+        };
+        let response_json = serialize_response_message(&response_message)?;
+        send_response(socket, response_json).await;
     }
+    Ok(())
+}
 
-    async fn handle_auth_message(auth_passengers: &mut Vec<u32>, mut socket: &mut TcpStream, passenger_id: u32) -> Result<(), Box<dyn Error>> {
-        let mut rng = rand::thread_rng();
-        let probability: bool = rng.gen_bool(0.7);
-
-        if probability {
-            auth_passengers.push(passenger_id);
-            log::debug!("Accepted payment from passenger {}", passenger_id);
-
-            let response_message = PaymentResponses::AuthPayment {
-                passenger_id,
-                response: true,
-            };
-
-            let response_json = serialize_response_message(&response_message)?;
-            send_response(socket, response_json).await;
-        } else {
-            log::debug!("Rejected payment from passenger {}", passenger_id);
-
-            let response_message = PaymentResponses::AuthPayment {
-                passenger_id,
-                response: false,
-            };
-            let response_json = serialize_response_message(&response_message)?;
-            send_response(socket, response_json).await;
-        }
-        Ok(())
+async fn send_response(socket: &mut TcpStream, response_json: String) {
+    if let Err(e) = socket.write_all((response_json + "\n").as_bytes()).await {
+        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
     }
+}
 
-    async fn send_response(socket: &mut TcpStream, response_json: String) {
-        if let Err(e) = socket.write_all((response_json + "\n").as_bytes()).await {
-            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-        }
-    }
-
-    fn serialize_response_message(
-        response_message: &PaymentResponses,
-    ) -> Result<String, Box<dyn Error>> {
-        serde_json::to_string(&response_message).map_err(|e| {
-            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-            e.into()
-        })
-    }
-
+fn serialize_response_message(
+    response_message: &PaymentResponses,
+) -> Result<String, Box<dyn Error>> {
+    serde_json::to_string(&response_message).map_err(|e| {
+        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+        e.into()
+    })
+}
 
 /*
 #[tokio::test]
@@ -183,4 +193,3 @@ async fn test_payment_functionality() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 */
- 

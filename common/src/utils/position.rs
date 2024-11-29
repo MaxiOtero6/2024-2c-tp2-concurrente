@@ -116,15 +116,27 @@ mod tests {
         // Test same point
         let pos1 = Position::new(10, 20);
         let pos2 = Position::new(10, 20);
-        assert_eq!(pos1.distance_to(&pos2), 0, "Distance to same point should be 0");
+        assert_eq!(
+            pos1.distance_to(&pos2),
+            0,
+            "Distance to same point should be 0"
+        );
 
         // Test different points
         let pos3 = Position::new(5, 10);
         let pos4 = Position::new(15, 25);
-        assert_eq!(pos3.distance_to(&pos4), 25, "Manhattan distance should be correct");
+        assert_eq!(
+            pos3.distance_to(&pos4),
+            25,
+            "Manhattan distance should be correct"
+        );
 
         // Test reversed points
-        assert_eq!(pos4.distance_to(&pos3), 25, "Distance calculation should be symmetric");
+        assert_eq!(
+            pos4.distance_to(&pos3),
+            25,
+            "Distance calculation should be symmetric"
+        );
     }
 
     // Test clone method
@@ -149,13 +161,15 @@ mod tests {
         // Verify position remains within 0-100 grid
         assert!(pos.x <= 100, "x coordinate should not exceed 100");
         assert!(pos.y <= 100, "y coordinate should not exceed 100");
-        assert!(pos.x >= 0, "x coordinate should not be negative");
-        assert!(pos.y >= 0, "y coordinate should not be negative");
 
         // Verify some movement has occurred
-        assert!((pos.x as i32 - initial_x as i32).abs() <= 10,
-                "x coordinate should change within ±10");
-        assert!((pos.y as i32 - initial_y as i32).abs() <= 10,
-                "y coordinate should change within ±10");
+        assert!(
+            (pos.x as i32 - initial_x as i32).abs() <= 10,
+            "x coordinate should change within ±10"
+        );
+        assert!(
+            (pos.y as i32 - initial_y as i32).abs() <= 10,
+            "y coordinate should change within ±10"
+        );
     }
 }
