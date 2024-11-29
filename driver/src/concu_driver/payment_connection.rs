@@ -1,9 +1,10 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use actix::{Actor, Addr, AsyncContext, Context, Message, StreamHandler};
 use tokio::{
     io::{split, AsyncBufReadExt, BufReader, WriteHalf},
     net::TcpStream,
+    sync::Mutex,
 };
 use tokio_stream::wrappers::LinesStream;
 

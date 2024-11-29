@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, ActorContext, Addr, AsyncContext, Context,
@@ -11,6 +7,7 @@ use actix::{
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
+    sync::Mutex,
 };
 
 use crate::concu_driver::central_driver::RemoveDriverConnection;
@@ -18,7 +15,7 @@ use crate::concu_driver::central_driver::RemoveDriverConnection;
 use super::{
     central_driver::{
         Alive, CanHandleTrip, CentralDriver, Coordinator, Election, RedirectNewTrip,
-        SetDriverPosition, StartElection,
+        SetDriverPosition, StartElection, TripResponse,
     },
     json_parser::DriverMessages,
 };
@@ -28,10 +25,6 @@ pub struct DriverConnection {
     central_driver: Addr<CentralDriver>,
     // Stream para enviar al driver
     driver_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
-    // Direccion del stream del driver
-    driver_addr: Option<SocketAddr>,
-    // ID de este driver
-    id: u32,
     // ID del driver
     driver_id: u32,
     //Guarda el ack recibido para cada pasajero
@@ -40,17 +33,13 @@ pub struct DriverConnection {
 
 impl DriverConnection {
     pub fn new(
-        id: u32,
         self_driver_addr: Addr<CentralDriver>,
-        wstream: Arc<Mutex<WriteHalf<TcpStream>>>,
-        driver_addr: Option<SocketAddr>,
+        wstream: WriteHalf<TcpStream>,
         driver_id: u32,
     ) -> Self {
         DriverConnection {
-            id,
             central_driver: self_driver_addr,
-            driver_write_stream: wstream,
-            driver_addr,
+            driver_write_stream: Arc::new(Mutex::new(wstream)),
             driver_id,
             responses: HashMap::new(),
         }
@@ -60,7 +49,7 @@ impl DriverConnection {
 impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
     fn handle(&mut self, msg: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(data) = msg {
-            log::debug!("recv {}", data);
+            // log::debug!("recv {}", data);
 
             let _ = ctx.address().try_send(RecvAll { data }).inspect_err(|e| {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
@@ -99,18 +88,17 @@ impl Handler<SendAll> for DriverConnection {
 
         let w = self.driver_write_stream.clone();
         wrap_future::<_, Self>(async move {
-            if let Ok(mut writer) = w.lock() {
-                let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
-                let _ = writer
-                    .flush()
-                    .await
-                    .inspect_err(|e| {
-                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                    })
-                    .inspect(|_| log::debug!("sent {}", message));
-            }
+            let mut writer = w.lock().await;
+
+            let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            });
+
+            let _ = writer.flush().await.inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            });
+
+            // log::debug!("sent {}", message)
         })
         .spawn(ctx);
     }
@@ -202,6 +190,21 @@ impl Handler<RecvAll> for DriverConnection {
                     passenger_id,
                     source: passenger_location,
                     destination,
+                })
+                .map_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    e.to_string()
+                })?,
+            DriverMessages::TripStatus {
+                passenger_id,
+                status,
+                detail,
+            } => self
+                .central_driver
+                .try_send(TripResponse {
+                    passenger_id,
+                    status,
+                    detail,
                 })
                 .map_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());

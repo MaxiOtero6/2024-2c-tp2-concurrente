@@ -1,15 +1,18 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 
 use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
     Message, SpawnHandle,
 };
-use common::utils::position::Position;
+use common::utils::{
+    json_parser::{TripMessages, TripStatus},
+    position::Position,
+};
 use rayon::{
     iter::{IntoParallelIterator, ParallelIterator},
     slice::ParallelSliceMut,
 };
-use tokio::time::sleep;
+use tokio::{sync::Mutex, time::sleep};
 
 use crate::concu_driver::{
     consts::{MAX_DISTANCE, TAKE_TRIP_TIMEOUT_MS},
@@ -27,7 +30,7 @@ pub struct CentralDriver {
     // Direccion del actor TripHandler
     trip_handler: Addr<TripHandler>,
     // Direccion del actor PassengerConnection
-    awaiting_response_passengers: HashMap<u32, Addr<PassengerConnection>>,
+    awaiting_response_passengers: Arc<Mutex<HashMap<u32, Addr<PassengerConnection>>>>,
     // Direccion del actor PaymentConnection
     connection_with_payment: Option<Addr<PaymentConnection>>,
     // Direcciones de los drivers segun su id
@@ -54,9 +57,9 @@ impl CentralDriver {
             leader_id: None,
             driver_positions: HashMap::new(),
             connection_with_drivers: HashMap::new(),
-            trip_handler: TripHandler::new(ctx.address()).start(),
+            trip_handler: TripHandler::new(ctx.address(), id).start(),
             connection_with_payment: None,
-            awaiting_response_passengers: HashMap::new(),
+            awaiting_response_passengers: Arc::new(Mutex::new(HashMap::new())),
             election_timeout: None,
         })
     }
@@ -75,6 +78,7 @@ impl CentralDriver {
         connection_with_drivers: &HashMap<u32, Addr<DriverConnection>>,
         msg: &FindDriver,
         trip_handler: &Addr<TripHandler>,
+        self_addr: &Addr<Self>,
     ) {
         let mut nearby_drivers = driver_positions
             .clone()
@@ -85,7 +89,11 @@ impl CentralDriver {
 
         nearby_drivers.par_sort();
 
-        log::debug!("nearby drivers: {:?}", nearby_drivers);
+        log::debug!(
+            "[TRIP] Nearby drivers for passenger {}: {:?}",
+            msg.passenger_id,
+            nearby_drivers
+        );
 
         let parsed_data = serde_json::to_string(&DriverMessages::CanHandleTrip {
             passenger_id: msg.passenger_id,
@@ -98,7 +106,11 @@ impl CentralDriver {
 
         if let Ok(data) = &parsed_data {
             for did in nearby_drivers {
-                log::debug!("Asking driver {}", did);
+                log::info!(
+                    "[TRIP] Asking driver {} if it will take the trip for passenger {}",
+                    did,
+                    msg.passenger_id
+                );
                 if did == *id {
                     let res = trip_handler
                         .send(super::handle_trip::CanHandleTrip {
@@ -115,11 +127,29 @@ impl CentralDriver {
                     if let Ok(value) = res {
                         if value {
                             log::info!(
-                                "Driver {} will take the trip for passenger {}",
+                                "[TRIP] Driver {} will take the trip for passenger {}",
                                 did,
                                 msg.passenger_id
                             );
-                            break;
+
+                            let detail = format!("Driver {} will take care of your trip", did);
+
+                            let _ = self_addr
+                                .try_send(SendTripResponse {
+                                    status: TripStatus::DriverSelected,
+                                    detail,
+                                    passenger_id: msg.passenger_id,
+                                })
+                                .inspect_err(|e| {
+                                    log::error!(
+                                        "{}:{}, {}",
+                                        std::file!(),
+                                        std::line!(),
+                                        e.to_string()
+                                    );
+                                });
+
+                            return;
                         }
                     }
                 }
@@ -147,20 +177,62 @@ impl CentralDriver {
                         if let Some(value) = ack {
                             if value {
                                 log::info!(
-                                    "Driver {} will take the trip for passenger {}",
+                                    "[TRIP] Driver {} will take the trip for passenger {}",
                                     did,
                                     msg.passenger_id
                                 );
-                                break;
+
+                                let detail = format!("Driver {} will take care of your trip", did);
+
+                                let _ = self_addr
+                                    .try_send(SendTripResponse {
+                                        status: TripStatus::DriverSelected,
+                                        detail,
+                                        passenger_id: msg.passenger_id,
+                                    })
+                                    .inspect_err(|e| {
+                                        log::error!(
+                                            "{}:{}, {}",
+                                            std::file!(),
+                                            std::line!(),
+                                            e.to_string()
+                                        );
+                                    });
+
+                                return;
                             }
                         }
                     }
                 }
 
-                log::debug!("Driver {} can not take the trip or did not answer", did)
+                log::info!(
+                    "[TRIP] Driver {} can not take the trip or did not answer",
+                    did
+                )
             }
         }
-        // MAL FLA PASAJERO
+
+        let detail = format!("There are no drivers available near your location");
+
+        match self_addr.try_send(ConnectWithPassenger {
+            passenger_id: msg.passenger_id,
+        }) {
+            Err(e) => {
+                log::error!("Can not connect with passenger {}", msg.passenger_id);
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            }
+            Ok(_) => {
+                let _ = self_addr
+                    .try_send(SendTripResponse {
+                        status: TripStatus::Error,
+                        detail,
+                        passenger_id: msg.passenger_id,
+                    })
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    });
+            }
+        }
     }
 }
 
@@ -246,9 +318,17 @@ pub struct InsertPassengerConnection {
 impl Handler<InsertPassengerConnection> for CentralDriver {
     type Result = ();
 
-    fn handle(&mut self, msg: InsertPassengerConnection, _ctx: &mut Context<Self>) -> Self::Result {
-        log::info!("Connecting with passenger {}", msg.id);
-        self.awaiting_response_passengers.insert(msg.id, msg.addr);
+    fn handle(&mut self, msg: InsertPassengerConnection, ctx: &mut Context<Self>) -> Self::Result {
+        let passengers = self.awaiting_response_passengers.clone();
+
+        wrap_future::<_, Self>(async move {
+            log::info!("Connecting with passenger {}", msg.id);
+
+            let mut lock = passengers.lock().await;
+
+            (*lock).insert(msg.id, msg.addr);
+        })
+        .spawn(ctx);
     }
 }
 
@@ -261,9 +341,17 @@ pub struct RemovePassengerConnection {
 impl Handler<RemovePassengerConnection> for CentralDriver {
     type Result = ();
 
-    fn handle(&mut self, msg: RemovePassengerConnection, _ctx: &mut Context<Self>) -> Self::Result {
-        log::info!("Disconnecting with passenger {}", msg.id);
-        self.awaiting_response_passengers.remove(&msg.id);
+    fn handle(&mut self, msg: RemovePassengerConnection, ctx: &mut Context<Self>) -> Self::Result {
+        let passengers = self.awaiting_response_passengers.clone();
+
+        wrap_future::<_, Self>(async move {
+            log::info!("Disconnecting with passenger {}", msg.id);
+
+            let mut lock = passengers.lock().await;
+
+            (*lock).remove(&msg.id);
+        })
+        .spawn(ctx);
     }
 }
 
@@ -485,6 +573,36 @@ impl Handler<RedirectNewTrip> for CentralDriver {
                     e.to_string()
                 })?;
             }
+
+            let passengers = self.awaiting_response_passengers.clone();
+
+            wrap_future::<_, Self>(async move {
+                let lock = passengers.lock().await;
+
+                let passenger_addr = (*lock).get(&msg.passenger_id);
+
+                if let Some(paddr) = passenger_addr {
+                    let parsed_data = serde_json::to_string(&TripMessages::TripResponse {
+                        status: TripStatus::RequestDelivered,
+                        detail: "Your request has been delivered, a driver will pick you up soon"
+                            .to_string(),
+                    })
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    });
+
+                    if let Ok(data) = parsed_data {
+                        let _ = paddr
+                            .try_send(super::passenger_connection::SendAll { data })
+                            .map_err(|e| {
+                                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                                e.to_string()
+                            });
+                    }
+                }
+            })
+            .spawn(ctx);
         }
 
         Ok(())
@@ -509,6 +627,7 @@ impl Handler<FindDriver> for CentralDriver {
         let id = self.id.clone();
         let connection_with_drivers = self.connection_with_drivers.clone();
         let trip_handler = self.trip_handler.clone();
+        let self_addr = ctx.address().clone();
 
         wrap_future::<_, Self>(async move {
             CentralDriver::find_driver(
@@ -517,6 +636,7 @@ impl Handler<FindDriver> for CentralDriver {
                 &connection_with_drivers,
                 &msg,
                 &trip_handler,
+                &self_addr,
             )
             .await;
         })
@@ -576,5 +696,109 @@ impl Handler<CanHandleTrip> for CentralDriver {
         .spawn(ctx);
 
         Ok(())
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct TripResponse {
+    pub status: TripStatus,
+    pub detail: String,
+    pub passenger_id: u32,
+}
+
+impl Handler<TripResponse> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: TripResponse, ctx: &mut Context<Self>) -> Self::Result {
+        let passengers = self.awaiting_response_passengers.clone();
+
+        wrap_future::<_, Self>(async move {
+            let lock = passengers.lock().await;
+            if let Some(passenger) = (*lock).get(&msg.passenger_id) {
+                let parsed_data = serde_json::to_string(&TripMessages::TripResponse {
+                    status: msg.status,
+                    detail: msg.detail,
+                })
+                .inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                });
+
+                if let Ok(data) = parsed_data {
+                    let _ = passenger
+                        .try_send(super::passenger_connection::SendAll { data })
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        });
+                }
+            }
+        })
+        .spawn(ctx);
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct ConnectWithPassenger {
+    pub passenger_id: u32,
+}
+
+impl Handler<ConnectWithPassenger> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: ConnectWithPassenger, ctx: &mut Context<Self>) -> Self::Result {
+        let self_addr = ctx.address().clone();
+
+        wrap_future::<_, Self>(async move {
+            let passenger_addr = PassengerConnection::connect(&self_addr, &msg.passenger_id).await;
+
+            if let Ok(addr) = passenger_addr {
+                let _ = self_addr.try_send(InsertPassengerConnection {
+                    id: msg.passenger_id,
+                    addr,
+                });
+            }
+        })
+        .spawn(ctx);
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct SendTripResponse {
+    pub status: TripStatus,
+    pub detail: String,
+    pub passenger_id: u32,
+}
+
+impl Handler<SendTripResponse> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: SendTripResponse, ctx: &mut Context<Self>) -> Self::Result {
+        let parsed_data = serde_json::to_string(&DriverMessages::TripStatus {
+            passenger_id: msg.passenger_id,
+            status: msg.status,
+            detail: msg.detail.clone(),
+        })
+        .inspect_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+        });
+
+        let passengers = self.awaiting_response_passengers.clone();
+
+        wrap_future::<_, Self>(async move {
+            let lock = passengers.lock().await;
+
+            if let Ok(data) = parsed_data {
+                if let Some(passenger) = (*lock).get(&msg.passenger_id) {
+                    let _ = passenger
+                        .try_send(super::passenger_connection::SendAll { data })
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        });
+                }
+            }
+        })
+        .spawn(ctx);
     }
 }

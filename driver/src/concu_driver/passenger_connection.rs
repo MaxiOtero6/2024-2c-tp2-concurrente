@@ -1,17 +1,19 @@
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
 use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, ActorContext, Addr, AsyncContext, Context,
     Handler, Message, StreamHandler,
 };
-use common::utils::json_parser::TripMessages;
-use tokio::{
-    io::{AsyncWriteExt, WriteHalf},
-    net::TcpStream,
+use common::utils::{
+    consts::{HOST, MIN_PASSENGER_PORT},
+    json_parser::TripMessages,
 };
+use tokio::{
+    io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHalf},
+    net::TcpStream,
+    sync::Mutex,
+};
+use tokio_stream::wrappers::LinesStream;
 
 use crate::concu_driver::central_driver::RemovePassengerConnection;
 
@@ -22,8 +24,6 @@ pub struct PassengerConnection {
     central_driver: Addr<CentralDriver>,
     // Stream para enviar al passenger
     passenger_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
-    // Direccion del stream del passenger
-    passenger_addr: Option<SocketAddr>,
     // ID del pasajero
     passenger_id: u32,
 }
@@ -32,14 +32,38 @@ impl PassengerConnection {
     pub fn new(
         central_driver: Addr<CentralDriver>,
         write_stream: WriteHalf<TcpStream>,
-        passenger_addr: Option<SocketAddr>,
         passenger_id: u32,
     ) -> Self {
         Self {
             central_driver,
             passenger_write_stream: Arc::new(Mutex::new(write_stream)),
-            passenger_addr,
             passenger_id,
+        }
+    }
+
+    pub async fn connect(
+        central_driver: &Addr<CentralDriver>,
+        passenger_id: &u32,
+    ) -> Result<Addr<Self>, String> {
+        // log::debug!("Trying to connect with passenger {}", passenger_id);
+
+        let addr = format!("{}:{}", HOST, MIN_PASSENGER_PORT + passenger_id);
+
+        match TcpStream::connect(addr).await {
+            Ok(socket) => {
+                let (r, w) = split(socket);
+
+                let passenger_conn = PassengerConnection::create(|ctx| {
+                    ctx.add_stream(LinesStream::new(BufReader::new(r).lines()));
+                    Self::new(central_driver.clone(), w, *passenger_id)
+                });
+
+                Ok(passenger_conn)
+            }
+            Err(e) => {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                Err(e.to_string())
+            }
         }
     }
 }
@@ -85,18 +109,17 @@ impl Handler<SendAll> for PassengerConnection {
 
         let w = self.passenger_write_stream.clone();
         wrap_future::<_, Self>(async move {
-            if let Ok(mut writer) = w.lock() {
-                let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
-                let _ = writer
-                    .flush()
-                    .await
-                    .inspect_err(|e| {
-                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                    })
-                    .inspect(|_| log::debug!("sent {}", message));
-            }
+            let mut writer = w.lock().await;
+
+            let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            });
+
+            let _ = writer.flush().await.inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+            });
+
+            // log::debug!("sent {}", message);
         })
         .spawn(ctx);
     }
@@ -134,7 +157,7 @@ impl Handler<RecvAll> for PassengerConnection {
                 })?,
 
             TripMessages::TripResponse {
-                success: _,
+                status: _,
                 detail: _,
             } => log::error!("Why i'm receiving a trip response?"),
         }
