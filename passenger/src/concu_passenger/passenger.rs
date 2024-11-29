@@ -8,7 +8,9 @@ use tokio::{
 use common::utils::json_parser::{CommonMessages, TripMessages};
 
 use crate::concu_passenger::utils::TripData;
-use common::utils::consts::{HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT, MIN_PASSENGER_PORT, PAYMENT_PORT};
+use common::utils::consts::{
+    HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT, MIN_PASSENGER_PORT, PAYMENT_PORT,
+};
 use common::utils::json_parser::{PaymentMessages, PaymentResponses};
 use tokio::net::TcpListener;
 use tokio::time::timeout;
@@ -95,7 +97,7 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     let mut rng = rand::thread_rng();
     log::info!("Requesting trip");
 
-    let self_addr =  { format!("{}:{}", HOST, MIN_PASSENGER_PORT + trip_data.id) } ;
+    let self_addr = { format!("{}:{}", HOST, MIN_PASSENGER_PORT + trip_data.id) };
 
     while !ports.is_empty() {
         let index = rng.gen_range(0..ports.len());
@@ -166,6 +168,9 @@ async fn wait_driver_responses(socket: &mut TcpStream) -> Result<(), Box<dyn Err
                     log::error!("Trip error: {}", detail);
                     break;
                 }
+                common::utils::json_parser::TripStatus::RequestDelivered => {
+                    break;
+                }
             },
             _ => {
                 log::error!("Invalid response");
@@ -225,16 +230,15 @@ async fn send_identification(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{
-        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-        net::{TcpListener, TcpStream},
-    };
     use common::utils::json_parser::{CommonMessages, TripMessages};
     use common::utils::position::Position;
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        net::TcpListener,
+    };
 
     const MOCK_SERVER_HOST: &str = "127.0.0.1";
     const MOCK_SERVER_PORT: u32 = 8080;
@@ -250,22 +254,26 @@ mod tests {
 
             // Leer mensaje de identificación
             reader.read_line(&mut buffer).await.unwrap();
-            let identification: CommonMessages =
-                serde_json::from_str(&buffer.trim()).unwrap();
+            let identification: CommonMessages = serde_json::from_str(&buffer.trim()).unwrap();
 
             // Validar mensaje y continuar
-            if let CommonMessages::Identification { id, type_ } = identification {
-                assert_eq!(id, 1);
-                assert_eq!(type_, 'P');
+            match identification {
+                CommonMessages::Identification { id, type_ } => {
+                    assert_eq!(id, 1);
+                    assert_eq!(type_, 'P');
+                }
             }
 
             // Leer solicitud de viaje
             buffer.clear();
             reader.read_line(&mut buffer).await.unwrap();
-            let trip_request: TripMessages =
-                serde_json::from_str(&buffer.trim()).unwrap();
+            let trip_request: TripMessages = serde_json::from_str(&buffer.trim()).unwrap();
 
-            if let TripMessages::TripRequest { source, destination } = trip_request {
+            if let TripMessages::TripRequest {
+                source,
+                destination,
+            } = trip_request
+            {
                 assert_eq!(source.x, 50);
                 assert_eq!(source.y, 100);
                 assert_eq!(destination.x, 150);
@@ -290,7 +298,8 @@ mod tests {
             id: 1,
             origin: Position { x: 50, y: 100 },
             destination: Position { x: 150, y: 200 },
-        });
+        })
+        .await;
         assert!(result.is_ok());
 
         // Espera a que el servidor mock termine
