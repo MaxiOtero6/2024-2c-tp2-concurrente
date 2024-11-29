@@ -13,6 +13,10 @@ use common::utils::{
 use crate::concu_passenger::utils::TripData;
 use common::utils::consts::{HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT, PAYMENT_PORT};
 use common::utils::json_parser::{PaymentMessages, PaymentResponses};
+use log::log;
+use tokio::io::AsyncRead;
+use tokio::net::TcpListener;
+use tokio::time::timeout;
 
 async fn validate_credit_card(id: u32) -> Result<(), Box<dyn Error>> {
     validate(id).await?;
@@ -45,9 +49,10 @@ async fn validate(id: u32) -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
-async fn handle_payment_response(mut socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+async fn handle_payment_response(socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+    let mut reader = BufReader::new(socket);
     let str_response = wait_driver_response(
-        &mut socket,
+        &mut reader,
         "Error receiving validation response".parse().unwrap(),
     )
     .await?;
@@ -95,30 +100,60 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     let mut rng = rand::thread_rng();
     log::info!("Requesting trip");
 
+    let mut self_addr = String::new();
+
     while !ports.is_empty() {
         let index = rng.gen_range(0..ports.len());
         let addr = format!("{}:{}", HOST, ports.remove(index));
 
         if let Ok(mut socket) = TcpStream::connect(addr.clone()).await {
+            if let Ok(local_addr_) = socket.local_addr() {
+                self_addr = local_addr_.to_string();
+            }
             send_identification(&trip_data, &mut socket).await?;
             log::info!("Identification sent!");
 
             send_trip_request(&mut socket).await?;
             log::info!("Request sent!");
-
-            wait_driver_responses(&mut socket).await?;
         } else {
-            log::error!("Error connecting to driver server");
-            return Err("Error connecting to driver server".into());
+            continue;
+        }
+
+        let listener = TcpListener::bind(&self_addr).await.map_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            e.to_string()
+        })?;
+
+        loop {
+            let result = timeout(Duration::from_secs(3), listener.accept()).await;
+
+            match result {
+                Ok(Ok((mut socket, _))) => {
+                    log::info!("Connection accepted");
+                    wait_driver_responses(&mut socket).await?;
+                }
+                Ok(Err(e)) => {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                }
+                Err(_) => {
+                    log::warn!("No response from driver");
+                    log::info!("Trying to connect again");
+                    break;
+                }
+            }
         }
     }
     Ok(())
 }
 
 async fn wait_driver_responses(socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+    let mut reader = BufReader::new(socket);
     loop {
-        let string_response =
-            wait_driver_response(socket, "Error receiving trip response".parse().unwrap()).await;
+        let string_response = wait_driver_response(
+            &mut reader,
+            "Error receiving trip response".parse().unwrap(),
+        )
+        .await;
 
         let response = match parse_trip_response(string_response?) {
             Ok(value) => value,
@@ -159,10 +194,9 @@ fn parse_trip_response(response: String) -> Result<TripMessages, Result<(), Box<
     Ok(response)
 }
 async fn wait_driver_response(
-    mut socket: &mut TcpStream,
+    reader: &mut BufReader<&mut TcpStream>,
     error: String,
 ) -> Result<String, Box<dyn Error>> {
-    let mut reader = BufReader::new(&mut socket);
     let mut str_response = String::new();
 
     reader.read_line(&mut str_response).await.map_err(|e| {
