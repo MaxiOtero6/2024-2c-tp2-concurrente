@@ -5,16 +5,11 @@ use tokio::{
     net::TcpStream,
 };
 
-use common::utils::{
-    json_parser::{CommonMessages, TripMessages},
-    position::Position,
-};
+use common::utils::json_parser::{CommonMessages, TripMessages};
 
 use crate::concu_passenger::utils::TripData;
-use common::utils::consts::{HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT, PAYMENT_PORT};
+use common::utils::consts::{HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT, MIN_PASSENGER_PORT, PAYMENT_PORT};
 use common::utils::json_parser::{PaymentMessages, PaymentResponses};
-use log::log;
-use tokio::io::AsyncRead;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
 
@@ -100,20 +95,17 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     let mut rng = rand::thread_rng();
     log::info!("Requesting trip");
 
-    let mut self_addr = String::new();
+    let self_addr =  { format!("{}:{}", HOST, MIN_PASSENGER_PORT + trip_data.id) } ;
 
     while !ports.is_empty() {
         let index = rng.gen_range(0..ports.len());
         let addr = format!("{}:{}", HOST, ports.remove(index));
 
         if let Ok(mut socket) = TcpStream::connect(addr.clone()).await {
-            if let Ok(local_addr_) = socket.local_addr() {
-                self_addr = local_addr_.to_string();
-            }
             send_identification(&trip_data, &mut socket).await?;
             log::info!("Identification sent!");
 
-            send_trip_request(&mut socket).await?;
+            send_trip_request(&mut socket, &trip_data).await?;
             log::info!("Request sent!");
         } else {
             continue;
@@ -209,11 +201,11 @@ async fn wait_driver_response(
     }
     Ok(str_response)
 }
-async fn send_trip_request(socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
-    let request = serde_json::to_string(&TripMessages::TripRequest {
-        source: Position::new(50, 100),
-        destination: Position::random(),
-    })?;
+async fn send_trip_request(
+    socket: &mut TcpStream,
+    request: &TripData,
+) -> Result<(), Box<dyn Error>> {
+    let request = serde_json::to_string(request)?;
 
     sleep(Duration::from_secs(1));
     socket.write_all((request + "\n").as_bytes()).await?;
