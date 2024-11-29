@@ -81,3 +81,81 @@ impl Position {
         } as u32;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::utils::position::Position;
+
+    // Test the new() constructor
+    #[test]
+    fn test_new_position() {
+        let pos = Position::new(10, 20);
+        assert_eq!(pos.x, 10, "x coordinate should be set correctly");
+        assert_eq!(pos.y, 20, "y coordinate should be set correctly");
+    }
+
+    // Test the random() method
+    #[test]
+    fn test_random_position() {
+        let pos = Position::random();
+        assert!(pos.x < 100, "x coordinate should be less than 100");
+        assert!(pos.y < 100, "y coordinate should be less than 100");
+    }
+
+    // Test the infinity() method
+    #[test]
+    fn test_infinity_position() {
+        let pos = Position::infinity();
+        assert_eq!(pos.x, u32::MAX, "x coordinate should be u32::MAX");
+        assert_eq!(pos.y, u32::MAX, "y coordinate should be u32::MAX");
+    }
+
+    // Test distance_to method
+    #[test]
+    fn test_distance_calculation() {
+        // Test same point
+        let pos1 = Position::new(10, 20);
+        let pos2 = Position::new(10, 20);
+        assert_eq!(pos1.distance_to(&pos2), 0, "Distance to same point should be 0");
+
+        // Test different points
+        let pos3 = Position::new(5, 10);
+        let pos4 = Position::new(15, 25);
+        assert_eq!(pos3.distance_to(&pos4), 25, "Manhattan distance should be correct");
+
+        // Test reversed points
+        assert_eq!(pos4.distance_to(&pos3), 25, "Distance calculation should be symmetric");
+    }
+
+    // Test clone method
+    #[test]
+    fn test_clone_method() {
+        let original = Position::new(15, 25);
+        let cloned = original.clone();
+
+        assert_eq!(original.x, cloned.x, "Cloned x should match original");
+        assert_eq!(original.y, cloned.y, "Cloned y should match original");
+    }
+
+    // Test simulate method
+    #[test]
+    fn test_simulate_method() {
+        let mut pos = Position::new(50, 50);
+        let initial_x = pos.x;
+        let initial_y = pos.y;
+
+        pos.simulate();
+
+        // Verify position remains within 0-100 grid
+        assert!(pos.x <= 100, "x coordinate should not exceed 100");
+        assert!(pos.y <= 100, "y coordinate should not exceed 100");
+        assert!(pos.x >= 0, "x coordinate should not be negative");
+        assert!(pos.y >= 0, "y coordinate should not be negative");
+
+        // Verify some movement has occurred
+        assert!((pos.x as i32 - initial_x as i32).abs() <= 10,
+                "x coordinate should change within ±10");
+        assert!((pos.y as i32 - initial_y as i32).abs() <= 10,
+                "y coordinate should change within ±10");
+    }
+}
