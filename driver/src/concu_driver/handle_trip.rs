@@ -4,10 +4,7 @@ use crate::concu_driver::{
     central_driver::{CollectMoneyPassenger, SendTripResponse},
     consts::TAKE_TRIP_PROBABILTY,
 };
-use actix::{
-    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
-    Message, WrapFuture,
-};
+use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, SpawnHandle, WrapFuture};
 use actix_async_handler::async_handler;
 use common::utils::{json_parser::TripStatus, position::Position};
 use rand::Rng;
@@ -25,6 +22,8 @@ pub struct TripHandler {
     current_location: Arc<Mutex<Position>>,
     // Id del pasajero actual
     passenger_id: Option<u32>,
+    // Tarea del viaje
+    trip_task: Option<SpawnHandle>,
 }
 
 impl Actor for TripHandler {
@@ -60,6 +59,7 @@ impl TripHandler {
             central_driver,
             current_location: Arc::new(Mutex::new(pos)),
             passenger_id: None,
+            trip_task: None,
         }
     }
 
@@ -108,65 +108,69 @@ impl Handler<TripStart> for TripHandler {
         let current_pos = Arc::clone(&self.current_location);
         let self_addr = ctx.address().clone();
 
-        wrap_future::<_, Self>(async move {
-            let mut lock = current_pos.lock().await;
+        self.trip_task = Some(
+            ctx.spawn(
+                async move {
+                    let mut lock = current_pos.lock().await;
 
-            log::info!("[TRIP] Start trip for passenger {}", msg.passenger_id);
+                    log::info!("[TRIP] Start trip for passenger {}", msg.passenger_id);
 
-            let _ = central_driver
-                .try_send(NotifyPositionToLeader {
-                    driver_location: Position::infinity(),
-                })
-                .inspect(|_| log::debug!("Sent infinity!"))
-                .inspect_err(|e| {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
+                    let _ = central_driver
+                        .try_send(NotifyPositionToLeader {
+                            driver_location: Position::infinity(),
+                        })
+                        .inspect(|_| log::debug!("Sent infinity!"))
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                        });
 
-            go_to_pos(&mut (*lock), &msg.passenger_location).await;
+                    go_to_pos(&mut (*lock), &msg.passenger_location).await;
 
-            let _ = central_driver
-                .try_send(SendTripResponse {
-                    passenger_id: msg.passenger_id,
-                    status: TripStatus::Info,
-                    detail: format!("I am at your door, come out!"),
-                })
-                .inspect_err(|e| {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
+                    let _ = central_driver
+                        .try_send(SendTripResponse {
+                            passenger_id: msg.passenger_id,
+                            status: TripStatus::Info,
+                            detail: format!("I am at your door, come out!"),
+                        })
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                        });
 
-            log::info!("[TRIP] Passenger {} picked up", msg.passenger_id);
+                    log::info!("[TRIP] Passenger {} picked up", msg.passenger_id);
 
-            go_to_pos(&mut (*lock), &msg.destination).await;
+                    go_to_pos(&mut (*lock), &msg.destination).await;
 
-            log::info!(
-                "[TRIP] Arrived at destination for passenger {}",
-                msg.passenger_id
-            );
+                    log::info!(
+                        "[TRIP] Arrived at destination for passenger {}",
+                        msg.passenger_id
+                    );
 
-            let detail =
-                format!("We have arrived at our destination, we hope you enjoyed the trip");
+                    let detail =
+                        format!("We have arrived at our destination, we hope you enjoyed the trip");
 
-            let _ = central_driver
-                .try_send(SendTripResponse {
-                    passenger_id: msg.passenger_id,
-                    status: TripStatus::Success,
-                    detail,
-                })
-                .inspect_err(|e| {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
+                    let _ = central_driver
+                        .try_send(SendTripResponse {
+                            passenger_id: msg.passenger_id,
+                            status: TripStatus::Success,
+                            detail,
+                        })
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                        });
 
-            let _ = central_driver
-                .try_send(CollectMoneyPassenger {
-                    passenger_id: msg.passenger_id,
-                })
-                .inspect_err(|e| {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
+                    let _ = central_driver
+                        .try_send(CollectMoneyPassenger {
+                            passenger_id: msg.passenger_id,
+                        })
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                        });
 
-            self_addr.do_send(ClearPassenger {});
-        })
-        .spawn(ctx);
+                    self_addr.do_send(ClearPassenger {});
+                }
+                .into_actor(self),
+            ),
+        )
     }
 }
 
@@ -235,9 +239,20 @@ pub struct ClearPassenger {}
 impl Handler<ClearPassenger> for TripHandler {
     type Result = ();
 
-    fn handle(&mut self, _msg: ClearPassenger, _ctx: &mut Context<Self>) -> Self::Result {
-        log::info!("Now i'm ready for another trip!");
+    fn handle(&mut self, _msg: ClearPassenger, ctx: &mut Context<Self>) -> Self::Result {
+        if let None = self.passenger_id {
+            return ();
+        }
+
         self.passenger_id = None;
+
+        if let Some(task) = self.trip_task {
+            ctx.cancel_future(task);
+            self.trip_task = None;
+            log::warn!("What the hell!! The passenger jump out of the car!!")
+        }
+
+        log::info!("Now i'm ready for another trip!");
     }
 }
 

@@ -15,7 +15,7 @@ use tokio::{sync::Mutex, time::sleep};
 use crate::concu_driver::{
     consts::{MAX_DISTANCE, TAKE_TRIP_TIMEOUT_MS},
     driver_connection::{CheckACK, SendAll},
-    handle_trip::ForceNotifyPosition,
+    handle_trip::{ClearPassenger, ForceNotifyPosition},
     json_parser::DriverMessages,
 };
 
@@ -175,6 +175,8 @@ impl CentralDriver {
 
         let detail = format!("There are no drivers available near your location");
 
+        log::info!("There are no drivers near passenger {}", msg.passenger_id);
+
         match self_addr.try_send(ConnectWithPassenger {
             passenger_id: msg.passenger_id,
         }) {
@@ -328,12 +330,16 @@ impl Handler<RemovePassengerConnection> for CentralDriver {
 
     fn handle(&mut self, msg: RemovePassengerConnection, ctx: &mut Context<Self>) -> Self::Result {
         let passenger = self.passengers.clone();
+        let trip_handler = self.trip_handler.clone();
 
         wrap_future::<_, Self>(async move {
             let mut lock = passenger.lock().await;
 
             if let Some(_) = (*lock).remove(&msg.id) {
                 log::info!("Disconnecting with passenger {}", msg.id);
+                let _ = trip_handler.try_send(ClearPassenger {}).inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
             }
         })
         .spawn(ctx);
