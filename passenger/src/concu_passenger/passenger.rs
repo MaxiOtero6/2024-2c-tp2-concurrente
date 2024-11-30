@@ -125,8 +125,9 @@ async fn listen_connections(id: u32) -> Result<(), String> {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
             }
             Err(_) => {
-                log::warn!("No response from driver");
-                log::info!("Listening new connections again");
+                log::warn!("No response from a driver");
+                // log::info!("Listening new connections again");
+                return Err("No response from a driver!, requesting trip again".into());
             }
         }
     }
@@ -211,14 +212,14 @@ async fn wait_driver_responses(socket: &mut TcpStream) -> Result<Result<(), Stri
         match response {
             TripMessages::TripResponse { status, detail } => match status {
                 common::utils::json_parser::TripStatus::Success => {
-                    log::info!("Trip success: {}", detail);
+                    log::info!("{}", detail);
                     return Ok(Ok(()));
                 }
-                common::utils::json_parser::TripStatus::DriverSelected => {
-                    log::info!("Driver selected: {}", detail);
+                common::utils::json_parser::TripStatus::Info => {
+                    log::info!("{}", detail);
                 }
                 common::utils::json_parser::TripStatus::Error => {
-                    log::error!("Trip error: {}", detail);
+                    log::error!("{}", detail);
                     return Ok(Err(detail));
                 }
                 common::utils::json_parser::TripStatus::RequestDelivered => {

@@ -9,10 +9,7 @@ use common::utils::{
     json_parser::{PaymentMessages, TripMessages, TripStatus},
     position::Position,
 };
-use rayon::{
-    iter::{IntoParallelIterator, ParallelIterator},
-    slice::ParallelSliceMut,
-};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use tokio::{sync::Mutex, time::sleep};
 
 use crate::concu_driver::{
@@ -23,10 +20,8 @@ use crate::concu_driver::{
 };
 
 use super::{
-    consts::ELECTION_TIMEOUT_DURATION,
-    driver_connection::DriverConnection,
-    handle_trip::{ClearPassenger, TripHandler},
-    passenger_connection::PassengerConnection,
+    consts::ELECTION_TIMEOUT_DURATION, driver_connection::DriverConnection,
+    handle_trip::TripHandler, passenger_connection::PassengerConnection,
     payment_connection::PaymentConnection,
 };
 
@@ -81,14 +76,12 @@ impl CentralDriver {
         trip_handler: &Addr<TripHandler>,
         self_addr: &Addr<Self>,
     ) {
-        let mut nearby_drivers = driver_positions
+        let nearby_drivers = driver_positions
             .clone()
             .into_par_iter()
             .filter(|(_, v)| v.distance_to(&msg.source) <= MAX_DISTANCE)
             .map(|(k, _)| k)
             .collect::<Vec<u32>>();
-
-        nearby_drivers.par_sort();
 
         log::debug!(
             "[TRIP] Nearby drivers for passenger {}: {:?}",
@@ -321,11 +314,6 @@ impl Handler<CheckPaymentResponse> for CentralDriver {
                 msg.passenger_id
             ),
         }
-
-        let _ = self
-            .trip_handler
-            .try_send(ClearPassenger {})
-            .inspect_err(|e| log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()));
     }
 }
 
@@ -674,14 +662,14 @@ impl Handler<CanHandleTrip> for CentralDriver {
 }
 
 #[derive(Message)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<(), String>")]
 pub struct ConnectWithPassenger {
     pub passenger_id: u32,
 }
 
 #[async_handler]
 impl Handler<ConnectWithPassenger> for CentralDriver {
-    type Result = ();
+    type Result = Result<(), String>;
 
     async fn handle(
         &mut self,
@@ -694,15 +682,18 @@ impl Handler<ConnectWithPassenger> for CentralDriver {
         let passenger_addr =
             PassengerConnection::connect(self_addr.clone(), msg.passenger_id).await;
 
-        if let Ok(addr) = passenger_addr {
-            log::info!("Connecting with passenger {}", msg.passenger_id);
+        let mut lock = passenger.lock_owned().await;
 
-            let mut lock = passenger.lock_owned().await;
+        match passenger_addr {
+            Ok(addr) => {
+                log::info!("Connecting with passenger {}", msg.passenger_id);
 
-            (*lock) = Some((msg.passenger_id, addr));
-        };
+                (*lock) = Some((msg.passenger_id, addr));
 
-        ()
+                Ok(())
+            }
+            Err(e) => Err(e.to_string()),
+        }
     }
 }
 

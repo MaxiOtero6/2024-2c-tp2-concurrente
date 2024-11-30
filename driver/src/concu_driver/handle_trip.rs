@@ -106,6 +106,7 @@ impl Handler<TripStart> for TripHandler {
 
         let central_driver = self.central_driver.clone();
         let current_pos = Arc::clone(&self.current_location);
+        let self_addr = ctx.address().clone();
 
         wrap_future::<_, Self>(async move {
             let mut lock = current_pos.lock().await;
@@ -122,6 +123,16 @@ impl Handler<TripStart> for TripHandler {
                 });
 
             go_to_pos(&mut (*lock), &msg.passenger_location).await;
+
+            let _ = central_driver
+                .try_send(SendTripResponse {
+                    passenger_id: msg.passenger_id,
+                    status: TripStatus::Info,
+                    detail: format!("I am at your door, come out!"),
+                })
+                .inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
 
             log::info!("[TRIP] Passenger {} picked up", msg.passenger_id);
 
@@ -152,6 +163,8 @@ impl Handler<TripStart> for TripHandler {
                 .inspect_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
                 });
+
+            self_addr.do_send(ClearPassenger {});
         })
         .spawn(ctx);
     }
@@ -183,12 +196,12 @@ impl Handler<CanHandleTrip> for TripHandler {
                 .await;
 
             match result {
-                Ok(_) => {
+                Ok(Ok(_)) => {
                     let _ = self
                         .central_driver
                         .try_send(SendTripResponse {
                             passenger_id: msg.passenger_id,
-                            status: TripStatus::DriverSelected,
+                            status: TripStatus::Info,
                             detail: format!(
                                 "Hi!, i am driver {}. I will be at your location in a moment.",
                                 msg.self_id
@@ -206,7 +219,7 @@ impl Handler<CanHandleTrip> for TripHandler {
 
                     true
                 }
-                Err(_) => false,
+                _ => false,
             }
         } else {
             false
