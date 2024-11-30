@@ -75,7 +75,7 @@ impl Actor for PassengerConnection {
 impl StreamHandler<Result<String, std::io::Error>> for PassengerConnection {
     fn handle(&mut self, msg: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(data) = msg {
-            log::debug!("recv {}", data);
+            // log::debug!("recv {}", data);
 
             let _ = ctx.address().try_send(RecvAll { data }).inspect_err(|e| {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
