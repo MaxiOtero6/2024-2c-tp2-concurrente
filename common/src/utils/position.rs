@@ -30,6 +30,10 @@ impl Position {
     }
 
     pub fn distance_to(&self, p: &Position) -> u32 {
+        if self.x > 100 || p.x > 100 || self.y > 100 || p.y > 100 {
+            return u32::MAX;
+        }
+
         let x: u32 = (p.x as i32 - self.x as i32).abs() as u32;
         let y: u32 = (p.y as i32 - self.y as i32).abs() as u32;
 
