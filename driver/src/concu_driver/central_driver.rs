@@ -678,7 +678,7 @@ impl Handler<SendTripResponse> for CentralDriver {
 
         wrap_future::<_, Self>(async move {
             let lock = passenger.lock().await;
-            log::debug!("{:?}", *lock);
+
             if let Ok(data) = parsed_data {
                 if let Some((_, paddr)) = &*lock {
                     let _ = paddr
