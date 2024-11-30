@@ -1,8 +1,10 @@
 use rand::Rng;
-use std::{error::Error, thread::sleep, time::Duration};
+use std::{error::Error, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    join,
     net::TcpStream,
+    task,
 };
 
 use common::utils::json_parser::{CommonMessages, TripMessages};
@@ -42,6 +44,7 @@ async fn validate(id: u32) -> Result<(), Box<dyn Error>> {
         handle_payment_response(&mut socket).await?;
     } else {
         log::error!("Error connecting to payment server");
+        return Err("Error connecting to payment server: Exiting the program.".into());
     }
 
     Ok(())
@@ -92,84 +95,131 @@ async fn send_auth_message(id: &u32, socket: &mut TcpStream) -> Result<(), Box<d
     Ok(())
 }
 
+async fn listen_connections(id: u32) -> Result<(), String> {
+    let self_addr = { format!("{}:{}", HOST, MIN_PASSENGER_PORT + id) };
+    let listener = TcpListener::bind(&self_addr).await.map_err(|e| {
+        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+        e.to_string()
+    })?;
+
+    log::info!("My addr is {}", self_addr);
+
+    loop {
+        let result = timeout(Duration::from_secs(10), listener.accept()).await;
+
+        match result {
+            Ok(Ok((mut socket, _))) => {
+                log::info!("Connection accepted");
+                match wait_driver_responses(&mut socket).await {
+                    Ok(_) => break,
+                    Err(_broken_pipe) => continue,
+                }
+            }
+            Ok(Err(e)) => {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            }
+            Err(_) => {
+                log::warn!("No response from driver");
+                log::info!("Trying to connect again");
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn make_request(trip_data: &TripData, socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+    send_identification(&trip_data, socket).await?;
+
+    log::info!("Identification sent!");
+
+    send_trip_request(socket, &trip_data).await?;
+
+    log::info!("Request sent!");
+
+    wait_driver_responses(socket).await?;
+
+    Ok(())
+}
+
 async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     let mut ports: Vec<u32> = (MIN_DRIVER_PORT..=MAX_DRIVER_PORT).collect();
     let mut rng = rand::thread_rng();
     log::info!("Requesting trip");
 
-    let self_addr = { format!("{}:{}", HOST, MIN_PASSENGER_PORT + trip_data.id) };
-
     while !ports.is_empty() {
         let index = rng.gen_range(0..ports.len());
         let addr = format!("{}:{}", HOST, ports.remove(index));
 
-        if let Ok(mut socket) = TcpStream::connect(addr.clone()).await {
-            send_identification(&trip_data, &mut socket).await?;
-            log::info!("Identification sent!");
+        let mut socket = match TcpStream::connect(addr.clone()).await {
+            Err(_) => continue,
+            Ok(socket) => socket,
+        };
 
-            send_trip_request(&mut socket, &trip_data).await?;
-            log::info!("Request sent!");
-        } else {
+        let listen_task = task::spawn(listen_connections(trip_data.id.clone()));
+
+        if let Err(e) = make_request(&trip_data, &mut socket).await {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            listen_task.abort();
             continue;
         }
 
-        let listener = TcpListener::bind(&self_addr).await.map_err(|e| {
-            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-            e.to_string()
-        })?;
+        let (listen_task_result,) = join!(listen_task);
 
-        loop {
-            let result = timeout(Duration::from_secs(3), listener.accept()).await;
-
-            match result {
-                Ok(Ok((mut socket, _))) => {
-                    log::info!("Connection accepted");
-                    wait_driver_responses(&mut socket).await?;
-                }
-                Ok(Err(e)) => {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                }
-                Err(_) => {
-                    log::warn!("No response from driver");
-                    log::info!("Trying to connect again");
-                    break;
-                }
+        match listen_task_result {
+            Ok(Err(cannot_bind_listener)) => log::error!("{}", cannot_bind_listener.to_string()),
+            Ok(Ok(_)) => {
+                log::info!("We arrived at your destination!");
+                break;
             }
+            Err(e) => log::error!("{}", e.to_string()),
         }
     }
     Ok(())
 }
 
-async fn wait_driver_responses(socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+async fn wait_driver_responses(socket: &mut TcpStream) -> Result<(), String> {
     let mut reader = BufReader::new(socket);
-    loop {
-        let string_response = wait_driver_response(
-            &mut reader,
-            "Error receiving trip response".parse().unwrap(),
-        )
-        .await;
 
-        let response = match parse_trip_response(string_response?) {
+    let mut request_delivered = false;
+
+    loop {
+        let string_response =
+            wait_driver_response(&mut reader, "Error receiving trip response".into()).await;
+
+        if let Err(res) = string_response {
+            if request_delivered {
+                return Ok(());
+            } else {
+                return Err(res.to_string());
+            }
+        }
+
+        let response = match parse_trip_response(string_response.map_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            e.to_string()
+        })?) {
             Ok(value) => value,
-            Err(value) => return value,
+            Err(value) => return Err(value),
         };
 
         match response {
             TripMessages::TripResponse { status, detail } => match status {
                 common::utils::json_parser::TripStatus::Success => {
                     log::info!("Trip success: {}", detail);
-                    continue;
+                    return Ok(());
                 }
                 common::utils::json_parser::TripStatus::DriverSelected => {
                     log::info!("Driver selected: {}", detail);
-                    break;
                 }
                 common::utils::json_parser::TripStatus::Error => {
                     log::error!("Trip error: {}", detail);
-                    break;
+                    return Err(detail);
                 }
                 common::utils::json_parser::TripStatus::RequestDelivered => {
-                    break;
+                    log::info!("{}", detail);
+                    request_delivered = true;
                 }
             },
             _ => {
@@ -180,12 +230,12 @@ async fn wait_driver_responses(socket: &mut TcpStream) -> Result<(), Box<dyn Err
     }
     Ok(())
 }
-fn parse_trip_response(response: String) -> Result<TripMessages, Result<(), Box<dyn Error>>> {
+fn parse_trip_response(response: String) -> Result<TripMessages, String> {
     let response: TripMessages = match serde_json::from_str(&response) {
         Ok(msg) => msg,
         Err(e) => {
             log::error!("Failed to parse PaymentMessages: {}, str: {}", e, response);
-            return Err(Err("Error parsing response".into()));
+            return Err("Error parsing response".into());
         }
     };
     Ok(response)
@@ -210,10 +260,15 @@ async fn send_trip_request(
     socket: &mut TcpStream,
     request: &TripData,
 ) -> Result<(), Box<dyn Error>> {
-    let request = serde_json::to_string(request)?;
+    let request = serde_json::to_string(&TripMessages::TripRequest {
+        source: request.origin,
+        destination: request.destination,
+    })?;
 
-    sleep(Duration::from_secs(1));
-    socket.write_all((request + "\n").as_bytes()).await?;
+    socket
+        .write_all((request + "\n").as_bytes())
+        .await
+        .inspect_err(|e| log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()))?;
     Ok(())
 }
 
