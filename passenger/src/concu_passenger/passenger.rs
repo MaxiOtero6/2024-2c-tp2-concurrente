@@ -111,8 +111,14 @@ async fn listen_connections(id: u32) -> Result<(), String> {
             Ok(Ok((mut socket, _))) => {
                 log::info!("Connection accepted");
                 match wait_driver_responses(&mut socket).await {
-                    Ok(_) => break,
-                    Err(_broken_pipe) => continue,
+                    Ok(Ok(_)) => {
+                        log::info!("We arrived at your destination!");
+                        break;
+                    }
+                    Ok(Err(_)) => break,
+                    Err(_broken_pipe) => {
+                        return Err("Driver disconnected!, requesting trip again".into())
+                    }
                 }
             }
             Ok(Err(e)) => {
@@ -120,8 +126,7 @@ async fn listen_connections(id: u32) -> Result<(), String> {
             }
             Err(_) => {
                 log::warn!("No response from driver");
-                log::info!("Trying to connect again");
-                break;
+                log::info!("Listening new connections again");
             }
         }
     }
@@ -138,7 +143,7 @@ async fn make_request(trip_data: &TripData, socket: &mut TcpStream) -> Result<()
 
     log::info!("Request sent!");
 
-    wait_driver_responses(socket).await?;
+    wait_driver_responses(socket).await??;
 
     Ok(())
 }
@@ -168,9 +173,8 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
         let (listen_task_result,) = join!(listen_task);
 
         match listen_task_result {
-            Ok(Err(cannot_bind_listener)) => log::error!("{}", cannot_bind_listener.to_string()),
+            Ok(Err(e)) => log::error!("{}", e.to_string()),
             Ok(Ok(_)) => {
-                log::info!("We arrived at your destination!");
                 break;
             }
             Err(e) => log::error!("{}", e.to_string()),
@@ -179,7 +183,7 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn wait_driver_responses(socket: &mut TcpStream) -> Result<(), String> {
+async fn wait_driver_responses(socket: &mut TcpStream) -> Result<Result<(), String>, String> {
     let mut reader = BufReader::new(socket);
 
     let mut request_delivered = false;
@@ -190,7 +194,7 @@ async fn wait_driver_responses(socket: &mut TcpStream) -> Result<(), String> {
 
         if let Err(res) = string_response {
             if request_delivered {
-                return Ok(());
+                return Ok(Ok(()));
             } else {
                 return Err(res.to_string());
             }
@@ -208,14 +212,14 @@ async fn wait_driver_responses(socket: &mut TcpStream) -> Result<(), String> {
             TripMessages::TripResponse { status, detail } => match status {
                 common::utils::json_parser::TripStatus::Success => {
                     log::info!("Trip success: {}", detail);
-                    return Ok(());
+                    return Ok(Ok(()));
                 }
                 common::utils::json_parser::TripStatus::DriverSelected => {
                     log::info!("Driver selected: {}", detail);
                 }
                 common::utils::json_parser::TripStatus::Error => {
                     log::error!("Trip error: {}", detail);
-                    return Err(detail);
+                    return Ok(Err(detail));
                 }
                 common::utils::json_parser::TripStatus::RequestDelivered => {
                     log::info!("{}", detail);
@@ -228,7 +232,7 @@ async fn wait_driver_responses(socket: &mut TcpStream) -> Result<(), String> {
             }
         }
     }
-    Ok(())
+    Ok(Ok(()))
 }
 fn parse_trip_response(response: String) -> Result<TripMessages, String> {
     let response: TripMessages = match serde_json::from_str(&response) {
