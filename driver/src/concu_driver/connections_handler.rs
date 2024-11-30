@@ -1,7 +1,10 @@
 use actix::{Actor, Addr, AsyncContext};
-use common::utils::consts::{MAX_DRIVER_PORT, MIN_DRIVER_PORT};
+use common::utils::{
+    consts::{MAX_DRIVER_PORT, MIN_DRIVER_PORT},
+    json_parser::TripMessages,
+};
 use tokio::{
-    io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf},
     net::{TcpListener, TcpStream},
     task::JoinHandle,
 };
@@ -10,9 +13,8 @@ use tokio_stream::wrappers::LinesStream;
 use crate::concu_driver::{central_driver::StartElection, json_parser::CommonMessages};
 
 use super::{
-    central_driver::{CentralDriver, InsertDriverConnection, InsertPassengerConnection},
+    central_driver::{CentralDriver, InsertDriverConnection, RedirectNewTrip},
     driver_connection::DriverConnection,
-    passenger_connection::PassengerConnection,
     utils::get_driver_address_by_id,
 };
 
@@ -56,7 +58,9 @@ impl DriverConnectionsHandler {
                         format!("Error connecting with {}, reason: {}", addr, e.to_string())
                     })?;
 
-                Self::connect_with_driver(central_driver_addr, socket, driver_id).await?;
+                let (r, w) = split(socket);
+
+                Self::connect_with_driver(central_driver_addr, r, w, driver_id).await?;
             }
 
             driver_id += 1;
@@ -91,14 +95,16 @@ impl DriverConnectionsHandler {
         log::info!("Listening to new connections!");
 
         loop {
-            let (mut socket, addr) = listener.accept().await.map_err(|e| {
+            let (socket, addr) = listener.accept().await.map_err(|e| {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                 e.to_string()
             })?;
 
             log::debug!("Connection accepted from {}", addr);
 
-            let mut reader = BufReader::new(&mut socket);
+            let (mut r, w) = split(socket);
+
+            let mut reader = BufReader::new(&mut r);
 
             let mut str_response = String::new();
 
@@ -108,7 +114,7 @@ impl DriverConnectionsHandler {
             })?;
 
             if str_response.is_empty() {
-                return Err("Error receiving identification".into());
+                log::error!("Error receiving identification");
             }
 
             let response: CommonMessages = serde_json::from_str(&str_response).map_err(|e| {
@@ -125,8 +131,13 @@ impl DriverConnectionsHandler {
 
             match response {
                 CommonMessages::Identification { id, type_ } => match type_ {
-                    'D' => Self::connect_with_driver(central_driver_addr, socket, id).await?,
-                    'P' => Self::connect_with_passenger(central_driver_addr, socket, id).await?,
+                    'D' => {
+                        let _ = Self::connect_with_driver(central_driver_addr, r, w, id).await;
+                    }
+                    'P' => {
+                        let _ =
+                            Self::connect_with_passenger(central_driver_addr, w, id, reader).await;
+                    }
                     _ => (),
                 },
             }
@@ -135,18 +146,13 @@ impl DriverConnectionsHandler {
 
     async fn connect_with_driver(
         central_driver_addr: &Addr<CentralDriver>,
-        socket: TcpStream,
+        r: ReadHalf<TcpStream>,
+        w: WriteHalf<TcpStream>,
         driver_id: u32,
     ) -> Result<(), String> {
-        let (r, w) = split(socket);
-
         let driver_conn = DriverConnection::create(|ctx| {
             ctx.add_stream(LinesStream::new(BufReader::new(r).lines()));
-            DriverConnection::new(
-                central_driver_addr.clone(),
-                w,
-                driver_id,
-            )
+            DriverConnection::new(central_driver_addr.clone(), w, driver_id)
         });
 
         central_driver_addr
@@ -162,24 +168,69 @@ impl DriverConnectionsHandler {
 
     async fn connect_with_passenger(
         central_driver_addr: &Addr<CentralDriver>,
-        socket: TcpStream,
+        mut w: WriteHalf<TcpStream>,
         passenger_id: u32,
+        mut reader: BufReader<&mut ReadHalf<TcpStream>>,
     ) -> Result<(), String> {
-        let (r, w) = split(socket);
+        let mut str_response = String::new();
 
-        let passenger_conn = PassengerConnection::create(|ctx| {
-            ctx.add_stream(LinesStream::new(BufReader::new(r).lines()));
-            PassengerConnection::new(central_driver_addr.clone(), w, passenger_id)
+        reader.read_line(&mut str_response).await.map_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            e.to_string()
+        })?;
+
+        if str_response.is_empty() {
+            log::error!("Error receiving trip request");
+            return Err("Error receiving trip request".into());
+        }
+
+        let response: TripMessages = serde_json::from_str(&str_response).map_err(|e| {
+            log::error!(
+                "{}:{}, {}, str: {}, len: {}",
+                std::file!(),
+                std::line!(),
+                e.to_string(),
+                str_response,
+                str_response.len()
+            );
+            e.to_string()
+        })?;
+
+        match response {
+            TripMessages::TripRequest {
+                source,
+                destination,
+            } => central_driver_addr
+                .try_send(RedirectNewTrip {
+                    passenger_id,
+                    source,
+                    destination,
+                })
+                .map_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    e.to_string()
+                })?,
+            _ => {
+                log::error!("{}:{}, TripRequest expected", std::file!(), std::line!());
+                return Err("TripRequest expected".into());
+            }
+        }
+
+        let parsed_data = serde_json::to_string(&TripMessages::TripResponse {
+            status: common::utils::json_parser::TripStatus::RequestDelivered,
+            detail: "Your request has been delivered, a driver will pick you up soon".to_string(),
+        })
+        .inspect_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
         });
 
-        central_driver_addr
-            .try_send(InsertPassengerConnection {
-                id: passenger_id,
-                addr: passenger_conn,
-            })
-            .map_err(|e| {
+        if let Ok(data) = parsed_data {
+            w.write_all((data + "\n").as_bytes()).await.map_err(|e| {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                 e.to_string()
-            })
+            })?;
+        }
+
+        Ok(())
     }
 }
