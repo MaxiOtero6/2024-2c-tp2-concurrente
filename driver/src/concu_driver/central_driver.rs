@@ -29,7 +29,7 @@ pub struct CentralDriver {
     // Direccion del actor TripHandler
     trip_handler: Addr<TripHandler>,
     // Direccion del actor PassengerConnection
-    passenger: Arc<Mutex<Option<(u32, Addr<PassengerConnection>)>>>,
+    passengers: Arc<Mutex<HashMap<u32, Addr<PassengerConnection>>>>,
     // Direcciones de los drivers segun su id
     connection_with_drivers: HashMap<u32, Addr<DriverConnection>>, // 0...N
     // Posiciones de los demas drivers segun su id,
@@ -55,7 +55,7 @@ impl CentralDriver {
             driver_positions: HashMap::new(),
             connection_with_drivers: HashMap::new(),
             trip_handler: TripHandler::new(ctx.address(), id).start(),
-            passenger: Arc::new(Mutex::new(None)),
+            passengers: Arc::new(Mutex::new(HashMap::new())),
             election_timeout: None,
         })
     }
@@ -327,14 +327,13 @@ impl Handler<RemovePassengerConnection> for CentralDriver {
     type Result = ();
 
     fn handle(&mut self, msg: RemovePassengerConnection, ctx: &mut Context<Self>) -> Self::Result {
-        let passenger = self.passenger.clone();
+        let passenger = self.passengers.clone();
 
         wrap_future::<_, Self>(async move {
             let mut lock = passenger.lock().await;
 
-            if let Some(_) = *lock {
+            if let Some(_) = (*lock).remove(&msg.id) {
                 log::info!("Disconnecting with passenger {}", msg.id);
-                (*lock) = None;
             }
         })
         .spawn(ctx);
@@ -676,7 +675,7 @@ impl Handler<ConnectWithPassenger> for CentralDriver {
         msg: ConnectWithPassenger,
         _ctx: &mut Context<Self>,
     ) -> Self::Result {
-        let passenger = self.passenger.clone();
+        let passenger = self.passengers.clone();
         let self_addr = _ctx.address();
 
         let passenger_addr =
@@ -688,7 +687,7 @@ impl Handler<ConnectWithPassenger> for CentralDriver {
             Ok(addr) => {
                 log::info!("Connecting with passenger {}", msg.passenger_id);
 
-                (*lock) = Some((msg.passenger_id, addr));
+                (*lock).insert(msg.passenger_id, addr);
 
                 Ok(())
             }
@@ -717,13 +716,13 @@ impl Handler<SendTripResponse> for CentralDriver {
             log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
         });
 
-        let passenger = self.passenger.clone();
+        let passenger = self.passengers.clone();
 
         wrap_future::<_, Self>(async move {
             let lock = passenger.lock().await;
 
             if let Ok(data) = parsed_data {
-                if let Some((_, paddr)) = &*lock {
+                if let Some(paddr) = (*lock).get(&msg.passenger_id) {
                     let _ = paddr
                         .try_send(super::passenger_connection::SendAll { data })
                         .inspect_err(|e| {
