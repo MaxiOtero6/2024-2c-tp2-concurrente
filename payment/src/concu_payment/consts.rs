@@ -1,0 +1,1 @@
+pub const ACCEPT_CARD_PROBABILITY: f64 = 0.99999;

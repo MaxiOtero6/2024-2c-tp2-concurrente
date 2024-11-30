@@ -5,6 +5,8 @@ use std::error::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
+use super::consts::ACCEPT_CARD_PROBABILITY;
+
 #[tokio::main]
 pub(crate) async fn handle_payments() -> Result<(), Box<dyn Error>> {
     handle().await
@@ -111,7 +113,7 @@ async fn handle_auth_message(
     passenger_id: u32,
 ) -> Result<(), Box<dyn Error>> {
     let mut rng = rand::thread_rng();
-    let probability: bool = rng.gen_bool(0.7);
+    let probability: bool = rng.gen_bool(ACCEPT_CARD_PROBABILITY);
 
     if probability {
         auth_passengers.push(passenger_id);
