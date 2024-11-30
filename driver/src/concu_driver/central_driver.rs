@@ -309,7 +309,7 @@ impl Handler<CheckPaymentResponse> for CentralDriver {
     fn handle(&mut self, msg: CheckPaymentResponse, _ctx: &mut Context<Self>) -> Self::Result {
         match msg.response {
             true => log::info!("Passenger {} paid for the trip!", msg.passenger_id),
-            false => log::warn!(
+            _ => log::warn!(
                 "Passenger {} did not pay for the trip!!, call the police!",
                 msg.passenger_id
             ),

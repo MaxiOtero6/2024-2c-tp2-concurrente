@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use actix::{
-    dev::ContextFutureSpawner, fut::wrap_future, Actor, ActorContext, Addr, AsyncContext, Context,
-    Handler, Message, StreamHandler,
+    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
+    Message, StreamHandler,
 };
 use tokio::{
     io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHalf},
@@ -54,7 +54,7 @@ impl PaymentConnection {
 
         Ok(PaymentConnection::create(|ctx| {
             ctx.add_stream(LinesStream::new(BufReader::new(r).lines()));
-            PaymentConnection::new(central_driver, w)
+            PaymentConnection::new(central_driver.clone(), w)
         }))
     }
 }
@@ -64,15 +64,11 @@ impl StreamHandler<Result<String, std::io::Error>> for PaymentConnection {
         if let Ok(data) = msg {
             // log::debug!("recv {}", data);
 
-            let _ = ctx.address().try_send(RecvAll { data }).inspect_err(|e| {
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-            });
+            ctx.notify(RecvAll { data });
         }
     }
 
-    fn finished(&mut self, ctx: &mut Self::Context) {
-        ctx.stop();
-    }
+    fn finished(&mut self, _ctx: &mut Self::Context) {}
 }
 
 #[derive(Message)]

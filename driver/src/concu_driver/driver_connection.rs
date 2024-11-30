@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use actix::{
-    dev::ContextFutureSpawner, fut::wrap_future, Actor, ActorContext, Addr, AsyncContext, Context,
+    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context,
     Handler, Message, StreamHandler,
 };
 use tokio::{
@@ -57,7 +57,7 @@ impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
         }
     }
 
-    fn finished(&mut self, ctx: &mut Self::Context) {
+    fn finished(&mut self, _ctx: &mut Self::Context) {
         // if let Some(did) = self.driver_id {
         log::warn!("Broken pipe with driver {}", self.driver_id);
         self.central_driver
@@ -66,7 +66,7 @@ impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
         // Election
         self.central_driver.do_send(StartElection {});
 
-        ctx.stop();
+        // ctx.stop();
     }
 }
 

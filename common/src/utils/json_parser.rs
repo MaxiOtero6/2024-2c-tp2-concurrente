@@ -33,7 +33,7 @@ pub enum PaymentMessages {
     CollectPayment { driver_id: u32, passenger_id: u32 },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum PaymentResponses {
     AuthPayment { passenger_id: u32, response: bool },
     CollectPayment { passenger_id: u32, response: bool },
