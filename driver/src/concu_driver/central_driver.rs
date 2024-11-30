@@ -17,6 +17,7 @@ use tokio::{sync::Mutex, time::sleep};
 use crate::concu_driver::{
     consts::{MAX_DISTANCE, TAKE_TRIP_TIMEOUT_MS},
     driver_connection::{CheckACK, SendAll},
+    handle_trip::ForceNotifyPosition,
     json_parser::DriverMessages,
 };
 
@@ -519,6 +520,11 @@ impl Handler<Coordinator> for CentralDriver {
         if self.im_leader() {
             log::info!("[ELECTION] Oh!, that is me");
         }
+
+        let _ = self
+            .trip_handler
+            .try_send(ForceNotifyPosition {})
+            .inspect_err(|e| log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()));
     }
 }
 

@@ -31,24 +31,12 @@ impl Actor for TripHandler {
         let recipient = self.central_driver.clone();
 
         ctx.spawn({
-            let position_lock = Arc::clone(&self.current_location);
-            let test_env_var = std::env::var("TEST");
+            let position_lock: Arc<Mutex<Position>> = Arc::clone(&self.current_location);
+            let test_env_var: Result<String, std::env::VarError> = std::env::var("TEST");
+
             async move {
                 loop {
-                    let mut lock = position_lock.lock().await;
-                    // Simulate position change
-                    match test_env_var {
-                        Ok(_) => (),
-                        Err(_) => (*lock).simulate(),
-                    }
-
-                    let _ = recipient
-                        .try_send(NotifyPositionToLeader {
-                            driver_location: *lock,
-                        })
-                        .inspect_err(|e| {
-                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                        });
+                    Self::notify_pos(&recipient, &position_lock, &test_env_var).await;
 
                     sleep(POSITION_NOTIFICATION_INTERVAL).await;
                 }
@@ -70,6 +58,25 @@ impl TripHandler {
             current_location: Arc::new(Mutex::new(pos)),
             passenger_id: None,
         }
+    }
+
+    async fn notify_pos(
+        central_driver: &Addr<CentralDriver>,
+        position_lock: &Arc<Mutex<Position>>,
+        test_env_var: &Result<String, std::env::VarError>,
+    ) {
+        let mut lock = position_lock.lock().await;
+        // Simulate position change
+        match test_env_var {
+            Ok(_) => (),
+            Err(_) => (*lock).simulate(),
+        }
+
+        let _ = central_driver
+            .try_send(NotifyPositionToLeader {
+                driver_location: *lock,
+            })
+            .inspect_err(|e| log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()));
     }
 }
 
@@ -188,5 +195,26 @@ impl Handler<ClearPassenger> for TripHandler {
     fn handle(&mut self, _msg: ClearPassenger, _ctx: &mut Context<Self>) -> Self::Result {
         log::info!("Now i'm ready for another trip!");
         self.passenger_id = None;
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct ForceNotifyPosition {}
+impl Handler<ForceNotifyPosition> for TripHandler {
+    type Result = ();
+
+    fn handle(&mut self, _msg: ForceNotifyPosition, ctx: &mut Context<Self>) -> Self::Result {
+        let recipient = self.central_driver.clone();
+
+        ctx.spawn({
+            let position_lock: Arc<Mutex<Position>> = Arc::clone(&self.current_location);
+            let test_env_var: Result<String, std::env::VarError> = std::env::var("TEST");
+
+            async move {
+                Self::notify_pos(&recipient, &position_lock, &test_env_var).await;
+            }
+            .into_actor(self)
+        });
     }
 }
