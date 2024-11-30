@@ -1,14 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
+use crate::concu_driver::{central_driver::SendTripResponse, consts::TAKE_TRIP_PROBABILTY};
 use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
     Message, WrapFuture,
 };
+use actix_async_handler::async_handler;
 use common::utils::{json_parser::TripStatus, position::Position};
 use rand::Rng;
 use tokio::{sync::Mutex, time::sleep};
-
-use crate::concu_driver::{central_driver::SendTripResponse, consts::TAKE_TRIP_PROBABILTY};
 
 use super::{
     central_driver::{CentralDriver, ConnectWithPassenger, NotifyPositionToLeader},
@@ -156,33 +156,56 @@ pub struct CanHandleTrip {
     pub passenger_id: u32,
     pub passenger_location: Position,
     pub destination: Position,
+    pub self_id: u32,
 }
 
+#[async_handler]
 impl Handler<CanHandleTrip> for TripHandler {
     type Result = bool;
 
-    fn handle(&mut self, msg: CanHandleTrip, ctx: &mut Context<Self>) -> Self::Result {
+    async fn handle(&mut self, msg: CanHandleTrip, _ctx: &mut Context<Self>) -> Self::Result {
         let mut rng = rand::thread_rng();
-        let response = if self.passenger_id.is_none() {
-            rng.gen_bool(TAKE_TRIP_PROBABILTY)
+        let response = self.passenger_id.is_none() && rng.gen_bool(TAKE_TRIP_PROBABILTY);
+
+        let res = if response {
+            let result = self
+                .central_driver
+                .send(ConnectWithPassenger {
+                    passenger_id: msg.passenger_id,
+                })
+                .await;
+
+            match result {
+                Ok(_) => {
+                    let _ = self
+                        .central_driver
+                        .try_send(SendTripResponse {
+                            passenger_id: msg.passenger_id,
+                            status: TripStatus::DriverSelected,
+                            detail: format!(
+                                "Hi!, i am driver {}. I will be at your location in a moment.",
+                                msg.self_id
+                            ),
+                        })
+                        .inspect_err(|e| {
+                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                        });
+
+                    _ctx.notify(TripStart {
+                        passenger_id: msg.passenger_id,
+                        passenger_location: msg.passenger_location,
+                        destination: msg.destination,
+                    });
+
+                    true
+                }
+                Err(_) => false,
+            }
         } else {
             false
         };
 
-        if response {
-            match self.central_driver.try_send(ConnectWithPassenger {
-                passenger_id: msg.passenger_id,
-            }) {
-                Ok(_) => ctx.notify(TripStart {
-                    passenger_id: msg.passenger_id,
-                    passenger_location: msg.passenger_location,
-                    destination: msg.destination,
-                }),
-                Err(_) => return false,
-            }
-        }
-
-        response
+        res
     }
 }
 

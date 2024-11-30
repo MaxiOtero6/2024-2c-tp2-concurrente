@@ -42,8 +42,8 @@ impl PassengerConnection {
     }
 
     pub async fn connect(
-        central_driver: &Addr<CentralDriver>,
-        passenger_id: &u32,
+        central_driver: Addr<CentralDriver>,
+        passenger_id: u32,
     ) -> Result<Addr<Self>, String> {
         // log::debug!("Trying to connect with passenger {}", passenger_id);
 
@@ -55,7 +55,7 @@ impl PassengerConnection {
 
                 let passenger_conn = PassengerConnection::create(|ctx| {
                     ctx.add_stream(LinesStream::new(BufReader::new(r).lines()));
-                    Self::new(central_driver.clone(), w, *passenger_id)
+                    Self::new(central_driver, w, passenger_id)
                 });
 
                 Ok(passenger_conn)
