@@ -347,9 +347,14 @@ impl Handler<RemovePassengerConnection> for CentralDriver {
 
             if let Some(_) = (*lock).remove(&msg.id) {
                 log::info!("Disconnecting with passenger {}", msg.id);
-                let _ = trip_handler.try_send(ClearPassenger {}).inspect_err(|e| {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
+                let _ = trip_handler
+                    .try_send(ClearPassenger {
+                        disconnected: true,
+                        passenger_id: msg.id,
+                    })
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                    });
             }
         })
         .spawn(ctx);

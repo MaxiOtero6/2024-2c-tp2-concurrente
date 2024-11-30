@@ -166,7 +166,10 @@ impl Handler<TripStart> for TripHandler {
                             log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
                         });
 
-                    self_addr.do_send(ClearPassenger {});
+                    self_addr.do_send(ClearPassenger {
+                        disconnected: false,
+                        passenger_id: msg.passenger_id,
+                    });
                 }
                 .into_actor(self),
             ),
@@ -235,22 +238,28 @@ impl Handler<CanHandleTrip> for TripHandler {
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct ClearPassenger {}
+pub struct ClearPassenger {
+    pub disconnected: bool,
+    pub passenger_id: u32,
+}
+
 impl Handler<ClearPassenger> for TripHandler {
     type Result = ();
 
-    fn handle(&mut self, _msg: ClearPassenger, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: ClearPassenger, ctx: &mut Context<Self>) -> Self::Result {
         if let None = self.passenger_id {
             return ();
         }
 
-        self.passenger_id = None;
-
-        if let Some(task) = self.trip_task {
-            ctx.cancel_future(task);
-            self.trip_task = None;
-            log::warn!("What the hell!! The passenger jump out of the car!!")
+        if msg.disconnected && self.passenger_id.unwrap() == msg.passenger_id {
+            if let Some(task) = self.trip_task {
+                ctx.cancel_future(task);
+                log::warn!("What the hell!! The passenger jump out of the car!!")
+            }
         }
+
+        self.passenger_id = None;
+        self.trip_task = None;
 
         log::info!("Now i'm ready for another trip!");
     }
