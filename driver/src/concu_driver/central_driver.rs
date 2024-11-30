@@ -6,7 +6,7 @@ use actix::{
 };
 use actix_async_handler::async_handler;
 use common::utils::{
-    json_parser::{TripMessages, TripStatus},
+    json_parser::{PaymentMessages, TripMessages, TripStatus},
     position::Position,
 };
 use rayon::{
@@ -23,8 +23,10 @@ use crate::concu_driver::{
 };
 
 use super::{
-    consts::ELECTION_TIMEOUT_DURATION, driver_connection::DriverConnection,
-    handle_trip::TripHandler, passenger_connection::PassengerConnection,
+    consts::ELECTION_TIMEOUT_DURATION,
+    driver_connection::DriverConnection,
+    handle_trip::{ClearPassenger, TripHandler},
+    passenger_connection::PassengerConnection,
     payment_connection::PaymentConnection,
 };
 
@@ -33,8 +35,6 @@ pub struct CentralDriver {
     trip_handler: Addr<TripHandler>,
     // Direccion del actor PassengerConnection
     passenger: Arc<Mutex<Option<(u32, Addr<PassengerConnection>)>>>,
-    // Direccion del actor PaymentConnection
-    connection_with_payment: Option<Addr<PaymentConnection>>,
     // Direcciones de los drivers segun su id
     connection_with_drivers: HashMap<u32, Addr<DriverConnection>>, // 0...N
     // Posiciones de los demas drivers segun su id,
@@ -60,7 +60,6 @@ impl CentralDriver {
             driver_positions: HashMap::new(),
             connection_with_drivers: HashMap::new(),
             trip_handler: TripHandler::new(ctx.address(), id).start(),
-            connection_with_payment: None,
             passenger: Arc::new(Mutex::new(None)),
             election_timeout: None,
         })
@@ -264,16 +263,69 @@ impl Handler<SetDriverPosition> for CentralDriver {
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct SetPaymentAddr {
-    pub connection_with_payment: Addr<PaymentConnection>,
+pub struct CollectMoneyPassenger {
+    pub passenger_id: u32,
 }
 
-impl Handler<SetPaymentAddr> for CentralDriver {
+#[async_handler]
+impl Handler<CollectMoneyPassenger> for CentralDriver {
     type Result = ();
 
-    fn handle(&mut self, msg: SetPaymentAddr, _ctx: &mut Context<Self>) -> Self::Result {
-        log::info!("Connecting with payments service");
-        self.connection_with_payment = Some(msg.connection_with_payment);
+    async fn handle(
+        &mut self,
+        msg: CollectMoneyPassenger,
+        _ctx: &mut Context<Self>,
+    ) -> Self::Result {
+        let driver_id = self.id.clone();
+        let self_addr = _ctx.address().clone();
+
+        let connection_with_payment = PaymentConnection::connect(self_addr).await;
+
+        if let Ok(addr) = connection_with_payment {
+            let parsed_data = serde_json::to_string(&PaymentMessages::CollectPayment {
+                driver_id,
+                passenger_id: msg.passenger_id,
+            })
+            .inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            });
+
+            if let Ok(data) = parsed_data {
+                let _ = addr
+                    .try_send(super::payment_connection::SendAll { data })
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    });
+            }
+        }
+
+        ()
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct CheckPaymentResponse {
+    pub passenger_id: u32,
+    pub response: bool,
+}
+
+impl Handler<CheckPaymentResponse> for CentralDriver {
+    type Result = ();
+
+    fn handle(&mut self, msg: CheckPaymentResponse, _ctx: &mut Context<Self>) -> Self::Result {
+        match msg.response {
+            true => log::info!("Passenger {} paid for the trip!", msg.passenger_id),
+            false => log::warn!(
+                "Passenger {} did not pay for the trip!!, call the police!",
+                msg.passenger_id
+            ),
+        }
+
+        let _ = self
+            .trip_handler
+            .try_send(ClearPassenger {})
+            .inspect_err(|e| log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()));
     }
 }
 

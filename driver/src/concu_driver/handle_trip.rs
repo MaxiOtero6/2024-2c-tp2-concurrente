@@ -1,6 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::concu_driver::{central_driver::SendTripResponse, consts::TAKE_TRIP_PROBABILTY};
+use crate::concu_driver::{
+    central_driver::{CollectMoneyPassenger, SendTripResponse},
+    consts::TAKE_TRIP_PROBABILTY,
+};
 use actix::{
     dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
     Message, WrapFuture,
@@ -103,7 +106,6 @@ impl Handler<TripStart> for TripHandler {
 
         let central_driver = self.central_driver.clone();
         let current_pos = Arc::clone(&self.current_location);
-        let self_addr = ctx.address().clone();
 
         wrap_future::<_, Self>(async move {
             let mut lock = current_pos.lock().await;
@@ -143,8 +145,13 @@ impl Handler<TripStart> for TripHandler {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
                 });
 
-            self_addr.do_send(ClearPassenger {});
-            // NOTIFY PAYMENT
+            let _ = central_driver
+                .try_send(CollectMoneyPassenger {
+                    passenger_id: msg.passenger_id,
+                })
+                .inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
         })
         .spawn(ctx);
     }
