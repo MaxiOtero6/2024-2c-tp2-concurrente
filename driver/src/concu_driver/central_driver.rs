@@ -9,7 +9,10 @@ use common::utils::{
     json_parser::{PaymentMessages, TripMessages, TripStatus},
     position::Position,
 };
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::{
+    iter::{IntoParallelIterator, ParallelIterator},
+    slice::ParallelSliceMut,
+};
 use tokio::{sync::Mutex, time::sleep};
 
 use crate::concu_driver::{
@@ -76,10 +79,17 @@ impl CentralDriver {
         trip_handler: &Addr<TripHandler>,
         self_addr: &Addr<Self>,
     ) {
-        let nearby_drivers = driver_positions
+        let mut distances = driver_positions
             .clone()
             .into_par_iter()
-            .filter(|(_, v)| v.distance_to(&msg.source) <= MAX_DISTANCE)
+            .map(|(k, v)| (k, v.distance_to(&msg.source)))
+            .filter(|(_, v)| *v <= MAX_DISTANCE)
+            .collect::<Vec<(u32, u32)>>();
+
+        distances.par_sort_by(|(_, a), (_, b)| a.cmp(&b));
+
+        let nearby_drivers = distances
+            .into_par_iter()
             .map(|(k, _)| k)
             .collect::<Vec<u32>>();
 
