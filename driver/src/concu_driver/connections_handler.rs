@@ -1,6 +1,6 @@
 use actix::{Actor, Addr, AsyncContext};
 use common::utils::{
-    consts::{MAX_DRIVER_PORT, MIN_DRIVER_PORT},
+    consts::{HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT},
     json_parser::TripMessages,
 };
 use tokio::{
@@ -15,7 +15,6 @@ use crate::concu_driver::{central_driver::StartElection, json_parser::CommonMess
 use super::{
     central_driver::{CentralDriver, InsertDriverConnection, RedirectNewTrip},
     driver_connection::DriverConnection,
-    utils::get_driver_address_by_id,
 };
 
 pub struct DriverConnectionsHandler;
@@ -37,10 +36,7 @@ impl DriverConnectionsHandler {
         let max_id = MAX_DRIVER_PORT - MIN_DRIVER_PORT;
 
         while driver_id <= max_id {
-            let addr = get_driver_address_by_id(driver_id).map_err(|e| {
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                e.to_string()
-            })?;
+            let addr = format!("{}:{}", HOST, MIN_DRIVER_PORT + driver_id);
 
             if let Ok(mut socket) = TcpStream::connect(addr.clone()).await {
                 let request = serde_json::to_string(&CommonMessages::Identification {
@@ -80,10 +76,7 @@ impl DriverConnectionsHandler {
                 e.to_string()
             })?;
 
-        let self_addr = get_driver_address_by_id(id).map_err(|e| {
-            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-            e.to_string()
-        })?;
+        let self_addr = format!("{}:{}", HOST, MIN_DRIVER_PORT + id);
 
         log::info!("My addr is {}", self_addr);
 
