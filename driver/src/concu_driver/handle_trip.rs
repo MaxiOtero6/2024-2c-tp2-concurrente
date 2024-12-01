@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use crate::concu_driver::{
     central_driver::{CollectMoneyPassenger, SendTripResponse},
-    consts::TAKE_TRIP_PROBABILTY,
+    consts::DEFAULT_TAKE_TRIP_PROBABILTY,
 };
 use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, SpawnHandle, WrapFuture};
 use actix_async_handler::async_handler;
@@ -192,7 +192,13 @@ impl Handler<CanHandleTrip> for TripHandler {
 
     async fn handle(&mut self, msg: CanHandleTrip, _ctx: &mut Context<Self>) -> Self::Result {
         let mut rng = rand::thread_rng();
-        let response = self.passenger_id.is_none() && rng.gen_bool(TAKE_TRIP_PROBABILTY);
+        let response = self.passenger_id.is_none()
+            && rng.gen_bool(
+                std::env::var("TAKE_TRIP_PROBABILITY")
+                    .unwrap_or(DEFAULT_TAKE_TRIP_PROBABILTY.to_string())
+                    .parse()
+                    .unwrap_or(DEFAULT_TAKE_TRIP_PROBABILTY),
+            );
 
         let res = if response {
             let result = self
