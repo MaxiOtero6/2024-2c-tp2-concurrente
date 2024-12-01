@@ -115,7 +115,7 @@ async fn listen_connections(id: u32) -> Result<(), String> {
                         log::info!("We arrived at your destination!");
                         break;
                     }
-                    Ok(Err(_)) => break,
+                    Ok(Err(e)) => return Err(e),
                     Err(_broken_pipe) => {
                         return Err("Driver disconnected!, requesting trip again".into())
                     }
@@ -154,6 +154,8 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     let mut rng = rand::thread_rng();
     log::info!("Requesting trip");
 
+    let mut ret: Result<(), Box<dyn Error>> = Err("Oops!, I can't request a trip correctly".into());
+
     while !ports.is_empty() {
         let index = rng.gen_range(0..ports.len());
         let addr = format!("{}:{}", HOST, ports.remove(index));
@@ -176,12 +178,14 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
         match listen_task_result {
             Ok(Err(e)) => log::error!("{}", e.to_string()),
             Ok(Ok(_)) => {
+                ret = Ok(());
                 break;
             }
             Err(e) => log::error!("{}", e.to_string()),
         }
     }
-    Ok(())
+
+    ret
 }
 
 async fn wait_driver_responses(socket: &mut TcpStream) -> Result<Result<(), String>, String> {
@@ -219,7 +223,6 @@ async fn wait_driver_responses(socket: &mut TcpStream) -> Result<Result<(), Stri
                     log::info!("{}", detail);
                 }
                 common::utils::json_parser::TripStatus::Error => {
-                    log::error!("{}", detail);
                     return Ok(Err(detail));
                 }
                 common::utils::json_parser::TripStatus::RequestDelivered => {
