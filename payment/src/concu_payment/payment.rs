@@ -115,9 +115,9 @@ async fn handle_auth_message(
     let mut rng = rand::thread_rng();
     let probability: bool = rng.gen_bool(
         std::env::var("ACCEPT_CARD_PROBABILITY")
-                    .unwrap_or(DEFAULT_ACCEPT_CARD_PROBABILITY.to_string())
-                    .parse()
-                    .unwrap_or(DEFAULT_ACCEPT_CARD_PROBABILITY),
+            .unwrap_or(DEFAULT_ACCEPT_CARD_PROBABILITY.to_string())
+            .parse()
+            .unwrap_or(DEFAULT_ACCEPT_CARD_PROBABILITY),
     );
 
     if probability {

@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use actix::{
-    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context,
-    Handler, Message, StreamHandler,
+    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
+    Message, StreamHandler,
 };
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},

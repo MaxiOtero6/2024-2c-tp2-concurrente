@@ -5,5 +5,5 @@ use serde::Serialize;
 pub struct TripData {
     pub id: u32,
     pub origin: Position,
-    pub destination: Position
+    pub destination: Position,
 }

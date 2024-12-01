@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use actix::{
-    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context,
-    Handler, Message, StreamHandler,
+    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
+    Message, StreamHandler,
 };
 use common::utils::{
     consts::{HOST, MIN_PASSENGER_PORT},
