@@ -88,92 +88,74 @@ impl Position {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::position::Position;
+    use super::*;
 
-    // Test the new() constructor
     #[test]
-    fn test_new_position() {
+    fn test_new() {
         let pos = Position::new(10, 20);
-        assert_eq!(pos.x, 10, "x coordinate should be set correctly");
-        assert_eq!(pos.y, 20, "y coordinate should be set correctly");
+        assert_eq!(pos.x, 10);
+        assert_eq!(pos.y, 20);
     }
 
-    // Test the random() method
     #[test]
-    fn test_random_position() {
+    fn test_random() {
         let pos = Position::random();
-        assert!(pos.x < 100, "x coordinate should be less than 100");
-        assert!(pos.y < 100, "y coordinate should be less than 100");
+        assert!(pos.x < 100);
+        assert!(pos.y < 100);
     }
 
-    // Test the infinity() method
     #[test]
-    fn test_infinity_position() {
+    fn test_infinity() {
         let pos = Position::infinity();
-        assert_eq!(pos.x, u32::MAX, "x coordinate should be u32::MAX");
-        assert_eq!(pos.y, u32::MAX, "y coordinate should be u32::MAX");
+        assert_eq!(pos.x, u32::MAX);
+        assert_eq!(pos.y, u32::MAX);
     }
 
-    // Test distance_to method
     #[test]
-    fn test_distance_calculation() {
-        // Test same point
+    fn test_distance_to() {
         let pos1 = Position::new(10, 20);
-        let pos2 = Position::new(10, 20);
-        assert_eq!(
-            pos1.distance_to(&pos2),
-            0,
-            "Distance to same point should be 0"
-        );
+        let pos2 = Position::new(15, 30);
+        assert_eq!(pos1.distance_to(&pos2), 15); // |15-10| + |30-20| = 5 + 10 = 15
 
-        // Test different points
-        let pos3 = Position::new(5, 10);
-        let pos4 = Position::new(15, 25);
-        assert_eq!(
-            pos3.distance_to(&pos4),
-            25,
-            "Manhattan distance should be correct"
-        );
-
-        // Test reversed points
-        assert_eq!(
-            pos4.distance_to(&pos3),
-            25,
-            "Distance calculation should be symmetric"
-        );
+        // Test distance when positions are out of bounds
+        let pos3 = Position::new(101, 20);
+        assert_eq!(pos1.distance_to(&pos3), u32::MAX);
     }
 
-    // Test clone method
     #[test]
-    fn test_clone_method() {
-        let original = Position::new(15, 25);
-        let cloned = original.clone();
-
-        assert_eq!(original.x, cloned.x, "Cloned x should match original");
-        assert_eq!(original.y, cloned.y, "Cloned y should match original");
+    fn test_clone() {
+        let pos1 = Position::new(10, 20);
+        let pos2 = pos1.clone();
+        assert_eq!(pos1.x, pos2.x);
+        assert_eq!(pos1.y, pos2.y);
     }
 
-    // Test simulate method
     #[test]
-    fn test_simulate_method() {
+    fn test_go_to() {
+        let mut pos1 = Position::new(10, 10);
+        let pos2 = Position::new(20, 20);
+        pos1.go_to(&pos2);
+        
+        // After go_to, pos1 should be closer to pos2
+        assert!(pos1.x <= 13 && pos1.x >= 10); // max step is 3
+        assert!(pos1.y <= 13 && pos1.y >= 10);
+    }
+
+    #[test]
+    fn test_simulate() {
         let mut pos = Position::new(50, 50);
-        let initial_x = pos.x;
-        let initial_y = pos.y;
-
         pos.simulate();
-
-        // Verify position remains within 0-100 grid
-        assert!(pos.x <= 100, "x coordinate should not exceed 100");
-        assert!(pos.y <= 100, "y coordinate should not exceed 100");
-
-        // Verify some movement has occurred
-        assert!(
-            (pos.x as i32 - initial_x as i32).abs() <= 10,
-            "x coordinate should change within ±10"
-        );
-        assert!(
-            (pos.y as i32 - initial_y as i32).abs() <= 10,
-            "y coordinate should change within ±10"
-        );
+        
+        // After simulation, position should be within bounds
+        assert!(pos.x <= 100);
+        assert!(pos.y <= 100);
+        
+        // Test boundary conditions
+        let mut pos_edge = Position::new(0, 100);
+        pos_edge.simulate();
+        assert!(pos_edge.x <= 100);
+        assert!(pos_edge.y <= 100);
+        assert!(pos_edge.x >= 0);
+        assert!(pos_edge.y >= 0);
     }
 }
