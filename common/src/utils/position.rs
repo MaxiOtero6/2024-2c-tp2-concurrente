@@ -135,7 +135,7 @@ mod tests {
         let mut pos1 = Position::new(10, 10);
         let pos2 = Position::new(20, 20);
         pos1.go_to(&pos2);
-        
+
         // After go_to, pos1 should be closer to pos2
         assert!(pos1.x <= 13 && pos1.x >= 10); // max step is 3
         assert!(pos1.y <= 13 && pos1.y >= 10);
@@ -145,17 +145,15 @@ mod tests {
     fn test_simulate() {
         let mut pos = Position::new(50, 50);
         pos.simulate();
-        
+
         // After simulation, position should be within bounds
         assert!(pos.x <= 100);
         assert!(pos.y <= 100);
-        
+
         // Test boundary conditions
         let mut pos_edge = Position::new(0, 100);
         pos_edge.simulate();
         assert!(pos_edge.x <= 100);
         assert!(pos_edge.y <= 100);
-        assert!(pos_edge.x >= 0);
-        assert!(pos_edge.y >= 0);
     }
 }
