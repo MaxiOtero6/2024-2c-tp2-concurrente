@@ -17,15 +17,20 @@ use common::utils::json_parser::{PaymentMessages, PaymentResponses};
 use tokio::net::TcpListener;
 use tokio::time::timeout;
 
+
+/// Valida la tarjeta de crédito del pasajero
 async fn validate_credit_card(id: u32) -> Result<(), Box<dyn Error>> {
     validate(id).await?;
     Ok(())
 }
+
+/// Realiza una solicitud de viaje al servidor de conductores
 async fn request_trip(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     request(trip_data).await?;
     Ok(())
 }
 
+/// Maneja el proceso de completar un viaje
 #[tokio::main]
 pub(crate) async fn handle_complete_trip(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     validate_credit_card(trip_data.id).await?;
@@ -33,6 +38,12 @@ pub(crate) async fn handle_complete_trip(trip_data: TripData) -> Result<(), Box<
     Ok(())
 }
 
+/// Valida la tarjeta de crédito del pasajero.
+/// Se conecta al servidor de pagos, envía un mensaje de autenticación y
+/// espera la respuesta del servidor
+/// - Si la respuesta es afirmativa, la tarjeta fue validada
+/// - Si la respuesta es negativa, la tarjeta fue rechazada
+/// - En caso de error, se retorna un error
 async fn validate(id: u32) -> Result<(), Box<dyn Error>> {
     let payment_port: u32 = PAYMENT_PORT;
 
@@ -49,6 +60,7 @@ async fn validate(id: u32) -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
 async fn handle_payment_response(socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
     let mut reader = BufReader::new(socket);
     let str_response = wait_driver_response(
@@ -85,6 +97,8 @@ async fn handle_payment_response(socket: &mut TcpStream) -> Result<(), Box<dyn E
     }
     Ok(())
 }
+
+/// Envia un mensaje de autenticación al servidor de pagos
 async fn send_auth_message(id: &u32, socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
     let payment_auth_message =
         serde_json::to_string(&PaymentMessages::AuthPayment { passenger_id: *id })?;
@@ -95,6 +109,7 @@ async fn send_auth_message(id: &u32, socket: &mut TcpStream) -> Result<(), Box<d
     Ok(())
 }
 
+/// Escucha las conexiones entrantes de los conductores
 async fn listen_connections(id: u32) -> Result<(), String> {
     let self_addr = { format!("{}:{}", HOST, MIN_PASSENGER_PORT + id) };
     let listener = TcpListener::bind(&self_addr).await.map_err(|e| {
@@ -135,6 +150,10 @@ async fn listen_connections(id: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// Realiza una solicitud de viaje al servidor de conductores
+/// - Envia un mensaje de identificación
+/// - Envia un mensaje de solicitud de viaje
+/// - Espera las respuestas de los conductores
 async fn make_request(trip_data: &TripData, socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
     send_identification(&trip_data, socket).await?;
 
@@ -148,6 +167,7 @@ async fn make_request(trip_data: &TripData, socket: &mut TcpStream) -> Result<()
 
     Ok(())
 }
+
 
 async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     let mut ports: Vec<u32> = (MIN_DRIVER_PORT..=MAX_DRIVER_PORT).collect();
@@ -187,6 +207,8 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
 
     ret
 }
+
+
 
 async fn wait_driver_responses(socket: &mut TcpStream) -> Result<Result<(), String>, String> {
     let mut reader = BufReader::new(socket);
@@ -238,6 +260,10 @@ async fn wait_driver_responses(socket: &mut TcpStream) -> Result<Result<(), Stri
     }
     Ok(Ok(()))
 }
+
+/// Parsea la respuesta del servidor de conductores
+/// - Si la respuesta es un mensaje de error, retorna un error
+/// - Si la respuesta es un mensaje de éxito, retorna la respuesta
 fn parse_trip_response(response: String) -> Result<TripMessages, String> {
     let response: TripMessages = match serde_json::from_str(&response) {
         Ok(msg) => msg,
@@ -248,6 +274,11 @@ fn parse_trip_response(response: String) -> Result<TripMessages, String> {
     };
     Ok(response)
 }
+
+/// Espera la respuesta del servidor de conductores y la retorna
+/// - Si la respuesta es vacía, retorna un error
+/// - Si la respuesta es un mensaje de error, retorna un error
+/// - Si la respuesta es un mensaje de éxito, retorna la respuesta
 async fn wait_driver_response(
     reader: &mut BufReader<&mut TcpStream>,
     error: String,
@@ -264,6 +295,8 @@ async fn wait_driver_response(
     }
     Ok(str_response)
 }
+
+/// Convierte la request de petición de viaje en un string y lo envia a través del socket
 async fn send_trip_request(
     socket: &mut TcpStream,
     request: &TripData,
@@ -280,6 +313,7 @@ async fn send_trip_request(
     Ok(())
 }
 
+/// Envia un mensaje de identificación, a través del socket, al servidor de conductores
 async fn send_identification(
     trip_data: &TripData,
     socket: &mut TcpStream,
