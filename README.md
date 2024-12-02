@@ -11,7 +11,9 @@
 ## Aplicaciones
 
 El sistema se compone de tres tipos de aplicaciones, Passengers los cuales solicitan viajes, Drivers los cuales aceptan y concretan esos viajes y Payment el cual controla el pago del viaje.
+
 ![arquitectura](assets/arq_actores.png)
+
 Como podemos ver en este diagrama, el pedido de los viajes lo recibe un driver al azar mediante un socket TCP. Estos mensajes estan en formato json y son serializados y deserializados utilizando el crate serde. El driver que recibe la request la redirige al driver lider y este se encarga de distribuir los viajes. Si el lider falla, se debe elegir otro lider utilizando el algoritmo de eleccion bully, debido a esto los driver deben estar conectados entre si. Para esta solucion tomamos la decision de conectar todos contra todos.
 
 Los passenger por lo tanto, envian un viaje a un driver aleatorio (si este driver no contesta se prueba con otro driver, en caso de que no conteste ninguno no se podra hacer el viaje) esperando un mensaje confirmando un viaje, un mensaje de su driver asignado y su finalizacion o en caso contrario, un mensaje de error.
@@ -446,6 +448,7 @@ pub enum DriverMessages {
 ### Driver
 
 ![driver_threads](assets/driver_threads.png)
+
 Cada driver va a tener una tarea async 'listener' la cual va a ser responsable de handlear nuevas conexiones con drivers o pasajeros.
 En ambas conexiones, se espera que primero se identifiquen con su id y tipo ('P' (passenger) o 'D' (driver)), en caso de que sea un passenger, se esperara ademas la request del viaje, la cual se enviara al CentralDriver mediante el mensaje 'RedirectNewTrip'.
 En el CentralDriver, si el driver es el driver lider, se notifica el mensaje 'FindDriver' con el cual lanza una nueva tarea async en el contexto del actor encargada de buscar un conductor para el pasajero. En caso de que el driver no sea el lider, le reenvia la request al lider mediante un socket TCP.
