@@ -14,7 +14,7 @@ El sistema se compone de tres tipos de aplicaciones, Passengers los cuales solic
 
 ![arquitectura](assets/arq_actores.png)
 
-Como podemos ver en este diagrama, el pedido de los viajes lo recibe un driver al azar mediante un socket TCP. Estos mensajes estan en formato json y son serializados y deserializados utilizando el crate serde. El driver que recibe la request la redirige al driver lider y este se encarga de distribuir los viajes. Si el lider falla, se debe elegir otro lider utilizando el algoritmo de eleccion bully, debido a esto los driver deben estar conectados entre si. Para esta solucion tomamos la decision de conectar todos contra todos.
+Como podemos ver en este diagrama, el pedido de los viajes lo recibe un driver al azar mediante un socket TCP. Estos mensajes estan en formato json y son serializados y deserializados utilizando el crate serde. El driver que recibe la request la redirige al driver lider y este se encarga de distribuir los viajes. Si el lider se cae o se une un nuevo driver a la red, se debe realizar la seleccion de lider utilizando el algoritmo de eleccion bully, debido a esto los driver deben estar conectados entre si. Para esta solucion tomamos la decision de conectar todos contra todos. Al completarse una eleccion con el mensaje 'Coordinator', se guarda la id del driver lider para poder identificarlo.
 
 Los passenger por lo tanto, envian un viaje a un driver aleatorio (si este driver no contesta se prueba con otro driver, en caso de que no conteste ninguno no se podra hacer el viaje) esperando un mensaje confirmando un viaje, un mensaje de su driver asignado y su finalizacion o en caso contrario, un mensaje de error.
 
@@ -30,9 +30,11 @@ Dentro del proceso Driver encontramos los actores:
 
 -   CentralDriver: Se responsabiliza en orquestar los mensajes recibidos de los diversos actores con los cuales se comunica a estos mismos actores y de asignar el conductor al pasajero. En caso de que sea necesario se encargara de seleccionar un nuevo lider.
 
--   DriverToDriverConnection: Se responsabiliza de las comunicaciones mediante sockets con los demas Drivers, hay una instancia de este actor por cada Driver que exista.
+-   DriverConnection: Se responsabiliza de las comunicaciones mediante sockets con los demas Drivers, hay una instancia de este actor por cada Driver que exista.
 
--   DriverToPassengerConnection: Se responsabiliza de las comunicaciones mediante sockets con el Passenger actual
+-   PassengerConnection: Se responsabiliza de las comunicaciones mediante sockets con un Passenger
+
+-   PaymentConnection: Se responsabiliza de las comunicaciones mediante sockets con el servicio de Payment
 
 Estructura del Central Driver:
 
@@ -453,7 +455,7 @@ Cada driver va a tener una tarea async 'listener' la cual va a ser responsable d
 En ambas conexiones, se espera que primero se identifiquen con su id y tipo ('P' (passenger) o 'D' (driver)), en caso de que sea un passenger, se esperara ademas la request del viaje, la cual se enviara al CentralDriver mediante el mensaje 'RedirectNewTrip'.
 En el CentralDriver, si el driver es el driver lider, se notifica el mensaje 'FindDriver' con el cual lanza una nueva tarea async en el contexto del actor encargada de buscar un conductor para el pasajero. En caso de que el driver no sea el lider, le reenvia la request al lider mediante un socket TCP.
 
-## Cambios post diseño
+# Cambios post diseño
 
 Commit viejo readme: e410c28993eee74049254d23db2837eeb70c74f8
 
@@ -483,3 +485,36 @@ Por los cambios anteriormente mencionados, se cambio la forma en la que se ejecu
 ### Envio de posicion del driver
 
 El driver al comunicar su posicion, si llegara a iniciar un viaje, enviara al lider (u32::MAX, u32::MAX) de forma que no sea tomado en cuenta luego de filtrar, ya que las coordenadas las manejamos en un area conformada por $x \in [0, 100]$ e $y \in [0, 100]$
+
+# Casos de interes
+
+## Viaje exitoso
+
+![viaje_exitoso](assets/casos/viaje_exitoso.png)
+
+Dados
+
+-   Driver 0 con posicion (0, 0)
+-   Driver 1 con posicion (5, 5)
+-   Driver 2 con posicion (10, 10)
+-   Driver 3 con posicion (15, 15)
+-   Passenger que quiere ir desde (3,3) -> (10, 10)
+
+El pasajero principalmente autoriza el pago con el servicio de Payment, al ser autorizado prosigue.
+Luego se conecta aleatoriamente con el driver 0, y le envia 'CommonMessages::Identification {id, type\_: 'P'}' y 'TripMessages::TripRequest {source: (3,3), destination: (10, 10)}'.
+El driver 0 redirige la request al driver 3 (lider) y le responde al pasajero que su request fue entregada cerrando asi la conexion.
+El driver 3 lanza una tarea async la cual clona las posiciones de los drivers en ese instante, filtra los drivers mas cercanos, los ordena en orden de distancia ascendente y se queda con los ids ordenados. Luego va preguntando uno por uno si quieren tomar el viaje. En este caso, el mas cercano es el driver 1, el cual rechaza la solicitud, siguiendo por el driver 0 el cual acepta la solicitud, el driver 3 y el driver 2 estaban a una distancia mayor a MAX_DISTANCE.
+Entonces, el driver 0 se conecta con el pasajero avisandole que sera su chofer, le avisa cuando esta cerca y cuando se llega a destino.
+Al terminar el viaje, el driver 0 se comunica con el servicio de Payment confirmando asi el cobro al pasajero.
+
+## Se cae el driver
+
+![d0_die](assets/casos/d0_die.png)
+
+En este caso, se hace la request igual que en el caso anterior, solo que durante el viaje, se desconecta el driver 0. Entonces, el cliente al recibir el broken pipe, realiza nuevamente la request. Y se inicia nuevamente la busqueda de un driver.
+
+## Se cae el pasajero
+
+![passenger_die](assets/casos/passenger_die.png)
+
+En este caso, se hace la request, se asigna un driver, y en un momento el pasajero se desconecta. Entonces el driver al ver que el pasajero se desconecto toma la decision de cancelar el viaje.

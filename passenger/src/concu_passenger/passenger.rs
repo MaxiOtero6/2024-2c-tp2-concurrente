@@ -110,7 +110,7 @@ async fn send_auth_message(id: &u32, socket: &mut TcpStream) -> Result<(), Box<d
 }
 
 /// Escucha las conexiones entrantes de los conductores
-async fn listen_connections(id: u32) -> Result<(), String> {
+async fn listen_connections(id: u32) -> Result<Result<(), String>, String> {
     let self_addr = { format!("{}:{}", HOST, MIN_PASSENGER_PORT + id) };
     let listener = TcpListener::bind(&self_addr).await.map_err(|e| {
         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
@@ -130,7 +130,7 @@ async fn listen_connections(id: u32) -> Result<(), String> {
                         log::info!("We arrived at your destination!");
                         break;
                     }
-                    Ok(Err(e)) => return Err(e),
+                    Ok(Err(e)) => return Ok(Err(e)),
                     Err(_broken_pipe) => {
                         return Err("Driver disconnected!, requesting trip again".into())
                     }
@@ -147,7 +147,7 @@ async fn listen_connections(id: u32) -> Result<(), String> {
         }
     }
 
-    Ok(())
+    Ok(Ok(()))
 }
 
 /// Realiza una solicitud de viaje al servidor de conductores
@@ -197,8 +197,12 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
 
         match listen_task_result {
             Ok(Err(e)) => log::error!("{}", e.to_string()),
-            Ok(Ok(_)) => {
+            Ok(Ok(Ok(_))) => {
                 ret = Ok(());
+                break;
+            }
+            Ok(Ok(Err(e))) => {
+                log::error!("{}", e.to_string());
                 break;
             }
             Err(e) => log::error!("{}", e.to_string()),
