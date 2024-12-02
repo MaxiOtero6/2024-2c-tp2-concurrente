@@ -15,7 +15,7 @@ pub(crate) async fn handle_payments() -> Result<(), Box<dyn Error>> {
 /// Crea un listener en el puerto PAYMENT_PORT y se se queda escuchando mensajes, cuando recibe un mensaje
 /// lo parsea y dependiendo del tipo de mensaje, si es AuthPayment, lo agrega a la lista de pasajeros autorizados
 /// si es CollectPayment, verifica si el pasajero esta en la lista de pasajeros autorizados y responde con un mensaje
-/// de respuesta.
+/// a traves del socket
 async fn handle() -> Result<(), Box<dyn Error>> {
     let mut auth_passengers = Vec::new();
 
@@ -77,7 +77,7 @@ async fn handle() -> Result<(), Box<dyn Error>> {
 }
 
 
-/// Verifica si el pasajero esta en la lista de pasajeros autorizados y responde con un mensaje a traves del socket.
+/// Verifica si el pasajero esta en la lista de pasajeros autorizados y responde con un mensaje a traves del socket
 async fn handle_collect_message(
     auth_passengers: &mut Vec<u32>,
     socket: &mut TcpStream,
@@ -115,7 +115,7 @@ async fn handle_collect_message(
 
 
 /// Agrega a la lista de pasajeros autorizados a un pasajero con una probabilidad  y envia un mensaje exitoso o fallido según
-/// la probabilidad a través socket.
+/// la probabilidad a través socket
 async fn handle_auth_message(
     auth_passengers: &mut Vec<u32>,
     socket: &mut TcpStream,
@@ -154,14 +154,14 @@ async fn handle_auth_message(
 }
 
 
-/// Envia un una respuesta a través del socket.
+/// Envia un una respuesta a través del socket
 async fn send_response(socket: &mut TcpStream, response_json: String) {
     if let Err(e) = socket.write_all((response_json + "\n").as_bytes()).await {
         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
     }
 }
 
-/// Serializa un mensaje a un string .
+/// Serializa un mensaje a un string
 fn serialize_response_message(
     response_message: &PaymentResponses,
 ) -> Result<String, Box<dyn Error>> {
