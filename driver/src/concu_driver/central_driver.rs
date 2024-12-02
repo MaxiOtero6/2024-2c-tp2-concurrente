@@ -71,18 +71,14 @@ impl CentralDriver {
         false
     }
 
-    async fn find_driver(
+    fn filter_nearby_drivers(
         driver_positions: &HashMap<u32, Position>,
-        id: &u32,
-        connection_with_drivers: &HashMap<u32, Addr<DriverConnection>>,
-        msg: &FindDriver,
-        trip_handler: &Addr<TripHandler>,
-        self_addr: &Addr<Self>,
-    ) {
+        source: &Position,
+    ) -> Vec<u32> {
         let mut distances = driver_positions
             .clone()
             .into_par_iter()
-            .map(|(k, v)| (k, v.distance_to(&msg.source)))
+            .map(|(k, v)| (k, v.distance_to(&source)))
             .filter(|(_, v)| *v <= MAX_DISTANCE)
             .collect::<Vec<(u32, u32)>>();
 
@@ -92,6 +88,19 @@ impl CentralDriver {
             .into_par_iter()
             .map(|(k, _)| k)
             .collect::<Vec<u32>>();
+
+        nearby_drivers
+    }
+
+    async fn find_driver(
+        driver_positions: &HashMap<u32, Position>,
+        id: &u32,
+        connection_with_drivers: &HashMap<u32, Addr<DriverConnection>>,
+        msg: &FindDriver,
+        trip_handler: &Addr<TripHandler>,
+        self_addr: &Addr<Self>,
+    ) {
+        let nearby_drivers = Self::filter_nearby_drivers(driver_positions, &msg.source);
 
         log::debug!(
             "[TRIP] Nearby drivers for passenger {}: {:?}",
@@ -187,14 +196,13 @@ impl CentralDriver {
 
         log::info!("There are no drivers near passenger {}", msg.passenger_id);
 
-        match self_addr.try_send(ConnectWithPassenger {
-            passenger_id: msg.passenger_id,
-        }) {
-            Err(e) => {
-                log::error!("Can not connect with passenger {}", msg.passenger_id);
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-            }
-            Ok(_) => {
+        match self_addr
+            .send(ConnectWithPassenger {
+                passenger_id: msg.passenger_id,
+            })
+            .await
+        {
+            Ok(Ok(_)) => {
                 let _ = self_addr
                     .try_send(SendTripResponse {
                         status: TripStatus::Error,
@@ -204,6 +212,9 @@ impl CentralDriver {
                     .inspect_err(|e| {
                         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                     });
+            }
+            _ => {
+                log::error!("Can not connect with passenger {}", msg.passenger_id);
             }
         }
     }
