@@ -612,6 +612,10 @@ impl Handler<FindDriver> for CentralDriver {
     type Result = ();
 
     fn handle(&mut self, msg: FindDriver, ctx: &mut Context<Self>) -> Self::Result {
+        if !self.im_leader() {
+            return;
+        }
+
         log::debug!("[TRIP] Finding a driver for passenger {}", msg.passenger_id);
 
         let driver_positions = self.driver_positions.clone();
