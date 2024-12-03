@@ -312,7 +312,7 @@ fn parse_trip_response(response: String) -> Result<TripMessages, String> {
     Ok(response)
 }
 
-/// Espera la respuesta del servidor de conductores y la retorna
+/// Espera una respuesta y la retorna 
 /// - Si la respuesta es vacía, retorna un error
 /// - Si la respuesta es un mensaje de error, retorna un error
 /// - Si la respuesta es un mensaje de éxito, retorna la respuesta
