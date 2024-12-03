@@ -20,15 +20,20 @@ use crate::concu_driver::central_driver::RemovePassengerConnection;
 use super::central_driver::{CentralDriver, RedirectNewTrip};
 
 pub struct PassengerConnection {
-    // Direccion del actor CentralDriver
+    /// Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
-    // Stream para enviar al passenger
+    /// Stream para enviar al passenger
     passenger_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
-    // ID del pasajero
+    /// ID del pasajero
     passenger_id: u32,
 }
 
 impl PassengerConnection {
+
+    /// Crea una nueva conexión con un pasajero con:
+    /// - La dirección del actor `CentralDriver`
+    /// - El stream de escritura
+    /// - ID del pasajero.
     pub fn new(
         central_driver: Addr<CentralDriver>,
         write_stream: WriteHalf<TcpStream>,
@@ -41,6 +46,14 @@ impl PassengerConnection {
         }
     }
 
+
+    /// Establece una conexión con un pasajero.
+    /// Se conecta al puerto `MIN_PASSENGER_PORT + passenger_id` en el host `HOST`.
+    /// Hace el split del socket TCP en un lector y un escritor.
+    /// Crea un nuevo actor `PassengerConnection` que:
+    /// - Agrega un flujo de líneas de texto (provenientes del lector) al contexto del actor.
+    /// - Retorna la dirección del actor `PassengerConnection` si la conexión es exitosa.
+    /// - Retorna un mensaje de error si ocurre un problema durante la conexión.
     pub async fn connect(
         central_driver: Addr<CentralDriver>,
         passenger_id: u32,
@@ -73,6 +86,9 @@ impl Actor for PassengerConnection {
 }
 
 impl StreamHandler<Result<String, std::io::Error>> for PassengerConnection {
+
+    /// Maneja los mensajes recibidos por el stream de lectura del pasajero.
+    /// Si el mensaje recibido es válido, lo envía al actor `RecvAll`.
     fn handle(&mut self, msg: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(data) = msg {
             // log::debug!("recv {}", data);
@@ -83,6 +99,9 @@ impl StreamHandler<Result<String, std::io::Error>> for PassengerConnection {
         }
     }
 
+    /// Maneja la finalización del stream de lectura del pasajero.
+    /// Si el stream se cierra, se envía un mensaje al actor `CentralDriver` para eliminar la conexión con el pasajero.
+    /// Luego, se detiene el actor.
     fn finished(&mut self, _ctx: &mut Self::Context) {
         // if let Some(did) = self.driver_id {
         log::warn!("Broken pipe with passenger {}", self.passenger_id);
@@ -104,6 +123,8 @@ pub struct SendAll {
 impl Handler<SendAll> for PassengerConnection {
     type Result = ();
 
+    /// Envía un mensaje al pasajero.
+    /// Lanza una tarea asincrónica en donde lockea el stream de escritura y escribe el mensaje en el stream.
     fn handle(&mut self, msg: SendAll, ctx: &mut Context<Self>) -> Self::Result {
         let message = msg.data + "\n";
 
@@ -134,6 +155,11 @@ pub struct RecvAll {
 impl Handler<RecvAll> for PassengerConnection {
     type Result = Result<(), String>;
 
+
+    /// Maneja los mensajes recibidos desde el pasajero.
+    /// Parsea el mensaje recibido y envía un mensaje:
+    /// Si el mensaje es de tipo `TripRequest` envía un mensaje al `CentralDriver` con la respuesta.
+    /// Si el mensaje es de tipo `TripResponse` loggea un error.
     fn handle(&mut self, msg: RecvAll, _ctx: &mut Context<Self>) -> Self::Result {
         let data = serde_json::from_str(&msg.data).map_err(|e| {
             log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
