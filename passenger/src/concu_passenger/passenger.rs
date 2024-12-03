@@ -17,7 +17,6 @@ use common::utils::json_parser::{PaymentMessages, PaymentResponses};
 use tokio::net::TcpListener;
 use tokio::time::timeout;
 
-
 /// Valida la tarjeta de crédito del pasajero
 async fn validate_credit_card(id: u32) -> Result<(), Box<dyn Error>> {
     validate(id).await?;
@@ -122,7 +121,7 @@ async fn send_auth_message(id: &u32, socket: &mut TcpStream) -> Result<(), Box<d
 /// Si la conexión falla, se retorna un error.
 
 async fn listen_connections(id: u32) -> Result<Result<(), String>, String> {
-    let self_addr =  format!("{}:{}", HOST, MIN_PASSENGER_PORT + id) ;
+    let self_addr = format!("{}:{}", HOST, MIN_PASSENGER_PORT + id);
     let listener = TcpListener::bind(&self_addr).await.map_err(|e| {
         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
         e.to_string()
@@ -178,8 +177,6 @@ async fn make_request(trip_data: &TripData, socket: &mut TcpStream) -> Result<()
     Ok(())
 }
 
-
-
 /// Itera por cada uno de los puertos de los conductores, intentando conectarse a cada uno de ellos
 /// hasta que se logre una conexión exitosa o hasta que se agoten los puertos.
 /// - Si la conexión es exitosa, envía un mensaje de solicitud de viaje
@@ -214,16 +211,26 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
         let (listen_task_result,) = join!(listen_task);
 
         match listen_task_result {
-            Ok(Err(e)) => log::error!("{}", e.to_string()), // Broken pipe
-            Ok(Ok(Ok(_))) => { // Ok
+            Ok(Err(e)) => {
+                log::error!("{}", e.to_string());
+                ports = (MIN_DRIVER_PORT..=MAX_DRIVER_PORT).collect();
+                continue;
+            } // Broken pipe
+            Ok(Ok(Ok(_))) => {
+                // Ok
                 ret = Ok(());
                 break;
             }
-            Ok(Ok(Err(e))) => { // Negative response from driver
+            Ok(Ok(Err(e))) => {
+                // Negative response from driver
                 log::error!("{}", e.to_string());
                 break;
             }
-            Err(e) => log::error!("{}", e.to_string()),
+            Err(e) => {
+                log::error!("{}", e.to_string());
+                ports = (MIN_DRIVER_PORT..=MAX_DRIVER_PORT).collect();
+                continue;
+            }
         }
     }
 
