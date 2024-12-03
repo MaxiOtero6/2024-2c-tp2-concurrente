@@ -100,13 +100,13 @@ impl CentralDriver {
     /// Obtiene los drivers cercanos a la posicion del pasajero.
     /// Parsea el mensaje a enviar a los drivers cercanos.
     /// Itera por cada uno de los drivers
-    /// -Si el driver es el mismo que el que recibe el mensaje, envia un mensaje al actor `TripHandler` para que maneje el viaje(sin necesidad de comunicarse por el stram).
-    /// -Si el driver no es el mismo que el que recibe el mensaje, le envía un mensaje "SendAll" al driver(comunicandose por el stream de escritura) con el mensaje parseado.
-    /// -Espera un tiempo para chequear si hubo respuesta del pasajero.
-    /// -Si el driver responde, envía un mensaje "CheckACK" al driver para verificar si el pasajero envio un ACK. En el caso que de que hubo respuesta del pasajero
+    /// - Si el driver es el mismo que el que recibe el mensaje, envia un mensaje al actor `TripHandler` para que maneje el viaje(sin necesidad de comunicarse por el stram).
+    /// - Si el driver no es el mismo que el que recibe el mensaje, le envía un mensaje "SendAll" al driver(comunicandose por el stream de escritura) con el mensaje parseado.
+    /// - Espera un tiempo para chequear si hubo respuesta del pasajero.
+    /// - Si el driver responde, envía un mensaje "CheckACK" al driver para verificar si el pasajero envio un ACK. En el caso que de que hubo respuesta del pasajero
     /// arranca el viaje.
-    /// -Si el driver no responde, loggea un mensaje de error.
-    /// -Si no hay drivers disponibles cerca del pasajero, envía un mensaje al actor `CentralDriver` para que se conecte con el pasajero y le envía un mensaje "SendTripResponse" al pasajero con el estado del viaje y un detalle.
+    /// - Si el driver no responde, loggea un mensaje de error.
+    /// - Si no hay drivers disponibles cerca del pasajero, envía un mensaje al actor `CentralDriver` para que se conecte con el pasajero y le envía un mensaje "SendTripResponse" al pasajero con el estado del viaje y un detalle.
 
     async fn find_driver(
         driver_positions: &HashMap<u32, Position>,
@@ -459,11 +459,11 @@ impl Handler<StartElection> for CentralDriver {
     type Result = ();
 
     /// Maneja los mensajes de inicio de eleccion.
-    /// Envia el mensaje Election a todos los drivers con id mayor al id del driver que envia el mensaje.
-    /// - Si no hay drivers con id mayor al id del driver que envia el mensaje, envia un mensaje al actor `Coordinator` con el id del driver que envia el mensaje.
-    /// - Si hay drivers con id mayor al id del driver que envia el mensaje, setea un timeout para la eleccion.
-    /// - Si no hay respuesta al timeout, envia un mensaje al actor `Coordinator` con el id del driver que envia el mensaje.
-    /// - Si hay respuesta al timeout, loggea un mensaje de que no hubo respuesta a la eleccion.
+    /// Envia el mensaje Election a todos los drivers con id mayor al id propio.
+    /// - Si no hay drivers con mayor id que el propio se declara coordinador y le notifica a todos los conductores.
+    /// - Si hay drivers con mayor id que el propio, les envía el mensaje Election.
+    ///     - Setea un timeout para la eleccion.
+    ///     - Si no hay respuesta de los drivers con mayor id que el propio, se declara coordinador y le notifica a todos los conductores.
     fn handle(&mut self, _msg: StartElection, ctx: &mut Context<Self>) -> Self::Result {
         self.leader_id = None;
         let mut higher_processes = false;
@@ -533,7 +533,10 @@ impl Handler<Election> for CentralDriver {
     type Result = ();
 
     /// Maneja los mensajes de eleccion.
-    /// - Si el id del driver que envia el mensaje es mayor al id del driver que recibe el mensaje, envia un mensaje "Alive" al driver que envia el mensaje además de iniciar una nueva eleccion.
+    /// - Si el driver recibe un mensaje de eleccion, verifica si el id del driver que envia el mensaje es menor al id propio.
+    ///
+    /// Si esto sucede envia un mensaje "Alive" al driver que envia el mensaje y envia un mensaje "StartElection" al actor `CentralDriver`
+    /// para continuar con el proceso de elección.
 
     fn handle(&mut self, msg: Election, ctx: &mut Context<Self>) -> Self::Result {
         log::debug!(
@@ -633,8 +636,8 @@ impl Handler<RedirectNewTrip> for CentralDriver {
     type Result = Result<(), String>;
 
     /// Maneja los mensajes de redireccion de un nuevo viaje.
-    /// - Si el driver es el lider, envia un mensaje al actor `FindDriver` con el id del pasajero, la posicion de origen y la posicion de destino.
-    ///
+    /// - Si el driver es el lider, envia un mensaje  `FindDriver` al actor con el id del pasajero, la posicion de origen y la posicion de destino.
+    /// - Si el driver no es el lider, envia un mensaje "TripRequest" al lider con el id del pasajero, la posicion de origen y la posicion de destino.
     fn handle(&mut self, msg: RedirectNewTrip, ctx: &mut Context<Self>) -> Self::Result {
         log::debug!(
             "[TRIP] Redirect to leader a trip for passenger {}",
@@ -690,6 +693,8 @@ pub struct FindDriver {
 impl Handler<FindDriver> for CentralDriver {
     type Result = ();
 
+    /// Maneja los mensajes de busqueda de un driver.
+    /// Genera una tarea asincrónica para buscar un driver para un pasajero.
     fn handle(&mut self, msg: FindDriver, ctx: &mut Context<Self>) -> Self::Result {
         if !self.im_leader() {
             return;
@@ -731,6 +736,10 @@ pub struct CanHandleTrip {
 impl Handler<CanHandleTrip> for CentralDriver {
     type Result = Result<(), String>;
 
+    /// Maneja los mensajes de si puede manejar un viaje.
+    /// Manda un mensaje al actor `TripHandler` para validar si puede  manejar el viaje y espera la respuesta.
+    /// - Si no hay ningun error le envia al lider el mensaje CanHandleTripACK con el id del cliente y
+    /// el estado del viaje
     fn handle(&mut self, msg: CanHandleTrip, ctx: &mut Context<Self>) -> Self::Result {
         let leader_id = self.leader_id.clone();
         let connection_with_drivers = self.connection_with_drivers.clone();
@@ -785,6 +794,12 @@ pub struct ConnectWithPassenger {
 impl Handler<ConnectWithPassenger> for CentralDriver {
     type Result = Result<(), String>;
 
+
+    /// Maneja los mensajes de conexion con un pasajero.
+    /// Se conecta con el actor `PassengerConnection` y envia un mensaje "Connect" con el id del pasajero y su dirección
+    /// - Si se conecta correctamente, loggea un mensaje de conexion con el pasajero.
+    /// - Si no se conecta correctamente, loggea un mensaje de error.
+    /// - Si se conecta correctamente, inserta la conexion del pasajero en el hashmap de pasajeros.
     async fn handle(
         &mut self,
         msg: ConnectWithPassenger,
@@ -814,13 +829,20 @@ impl Handler<ConnectWithPassenger> for CentralDriver {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct SendTripResponse {
+    /// Estado del viaje
     pub status: TripStatus,
+    /// Detalle del viaje
     pub detail: String,
+    /// Id del pasajero
     pub passenger_id: u32,
 }
 
 impl Handler<SendTripResponse> for CentralDriver {
     type Result = ();
+
+    /// Maneja los mensajes de respuesta de un viaje.
+    /// - Si el driver recibe un mensaje de respuesta, envia un mensaje al pasajero con el estado del viaje y el detalle.
+    /// - Si el driver no recibe un mensaje de respuesta, loggea un mensaje de error.
 
     fn handle(&mut self, msg: SendTripResponse, ctx: &mut Context<Self>) -> Self::Result {
         let parsed_data = serde_json::to_string(&TripMessages::TripResponse {
