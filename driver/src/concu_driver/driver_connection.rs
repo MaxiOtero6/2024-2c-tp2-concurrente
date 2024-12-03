@@ -54,7 +54,7 @@ impl DriverConnection {
 impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
 
     /// Maneja los mensajes recibidos desde los drivers.
-    /// Verifica si el mensaje es un mensaje válido y en caso de serlo envía un mensaje a si mismo "RecAll" con el mensaje recibido.
+    /// Verifica si el mensaje es un mensaje válido y en caso de serlo envía un mensaje a si mismo "RecvAll" con el mensaje recibido.
     fn handle(&mut self, msg: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(data) = msg {
             // log::debug!("recv {}", data);

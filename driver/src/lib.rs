@@ -4,6 +4,8 @@ use concu_driver::driver::drive;
 
 pub mod concu_driver;
 
+
+/// Rebice un driver_id y ejecuta el driver correspondiente
 pub fn run() -> Result<(), Box<dyn Error>> {
     let argv: Vec<String> = std::env::args().collect();
 

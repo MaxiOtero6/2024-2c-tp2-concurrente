@@ -20,6 +20,8 @@ use super::{
 pub struct DriverConnectionsHandler;
 
 impl DriverConnectionsHandler {
+    
+    /// Corre el setUp del driver a la hora de crearse
     pub fn run(
         id: u32,
         central_driver_addr: Addr<CentralDriver>,
@@ -27,6 +29,10 @@ impl DriverConnectionsHandler {
         actix::spawn(async move { Self::setup(&central_driver_addr, id).await })
     }
 
+    
+    /// Conecta a todos los drivers
+    /// 
+    /// Mientras el driver_id sea menor o igual al maximo de drivers, se conecta a cada uno
     async fn connect_all_drivers(
         self_id: u32,
         central_driver_addr: &Addr<CentralDriver>,
@@ -65,6 +71,14 @@ impl DriverConnectionsHandler {
         Ok(())
     }
 
+    /// Setea el driver
+    /// - Se conecta con todos los drivers
+    /// - Comienza una nueva elección
+    /// - Se pone a escuchar por nuevas conexiones
+    /// 
+    /// Puede tener dos posibles conexiones: 
+    ///  - Con un driver: Se crea un nuevo actor DriverConnection y se le pasa un stream de lineas para que escuche los mensajes
+    /// - Con un pasajero: Se lee del stream para ver si recibio algun mensaje y lo handlea como debe
     async fn setup(central_driver_addr: &Addr<CentralDriver>, id: u32) -> Result<(), String> {
         Self::connect_all_drivers(id, central_driver_addr).await?;
 
@@ -129,7 +143,7 @@ impl DriverConnectionsHandler {
                     }
                     'P' => {
                         let _ =
-                            Self::connect_with_passenger(central_driver_addr, w, id, reader).await;
+                            Self::handle_passenger_connection(central_driver_addr, w, id, reader).await;
                     }
                     _ => (),
                 },
@@ -137,6 +151,7 @@ impl DriverConnectionsHandler {
         }
     }
 
+    /// Creas el Actor DriverConnection y le agregas un stream de lineas para que escuche los mensajes
     async fn connect_with_driver(
         central_driver_addr: &Addr<CentralDriver>,
         r: ReadHalf<TcpStream>,
@@ -158,8 +173,16 @@ impl DriverConnectionsHandler {
                 e.to_string()
             })
     }
-
-    async fn connect_with_passenger(
+    
+    
+    /// Conecta con un pasajero
+    /// Lee del strem para ver si recibio algun mensaje. 
+    /// - En el caso de recirlo lo parsea y le envia el mensaje RedirectTrip al central_driver
+    /// - En el caso de no recibirlo, devuelve un error
+    /// 
+    /// Luego se envia un mensaje de confirmacion al pasajero de que su viaje esta siendo procesado 
+    /// 
+    async fn handle_passenger_connection(
         central_driver_addr: &Addr<CentralDriver>,
         mut w: WriteHalf<TcpStream>,
         passenger_id: u32,
