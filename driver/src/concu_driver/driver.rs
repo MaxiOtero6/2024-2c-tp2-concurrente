@@ -5,12 +5,15 @@ use tokio::join;
 
 use super::{central_driver::CentralDriver, connections_handler::DriverConnectionsHandler};
 
+
+/// Inicia el driver con el id pasado por parametro
 pub fn drive(id: u32) -> Result<(), Box<dyn Error>> {
     System::new().block_on(connect_all(id))?;
 
     Ok(())
 }
 
+/// Conecta el driver con el id pasado por parametro
 async fn connect_all(id: u32) -> Result<(), Box<dyn Error>> {
     let cdriver = CentralDriver::create_new(id);
 

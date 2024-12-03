@@ -16,19 +16,22 @@ use super::{
 };
 
 pub struct TripHandler {
-    // Direccion del actor CentralDriver
+    /// Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
-    // Posicion actual del driver
+    /// Posicion actual del driver
     current_location: Arc<Mutex<Position>>,
-    // Id del pasajero actual
+    /// Id del pasajero actual
     passenger_id: Option<u32>,
-    // Tarea del viaje
+    /// Tarea del viaje
     trip_task: Option<SpawnHandle>,
 }
 
 impl Actor for TripHandler {
     type Context = Context<Self>;
 
+    /// Inicializa el actor.
+    ///
+    /// Cada cierto tiempo notifica su posición al `CentralDriver`.
     fn started(&mut self, ctx: &mut Self::Context) {
         let recipient = self.central_driver.clone();
 
@@ -49,6 +52,10 @@ impl Actor for TripHandler {
 }
 
 impl TripHandler {
+
+    /// Crea una nueva conexión con un driver con:
+    /// - La dirección del actor `CentralDriver`
+    /// - El ID del driver.
     pub fn new(central_driver: Addr<CentralDriver>, self_id: u32) -> Self {
         let pos = match std::env::var("TEST") {
             Ok(_) => Position::new(self_id * 5, self_id * 5),
@@ -63,6 +70,7 @@ impl TripHandler {
         }
     }
 
+    /// Simula la posición del driver y la notifica al `CentralDriver`.
     async fn notify_pos(
         central_driver: &Addr<CentralDriver>,
         position_lock: &Arc<Mutex<Position>>,
@@ -93,6 +101,14 @@ struct TripStart {
 impl Handler<TripStart> for TripHandler {
     type Result = ();
 
+    /// - Inicia un viaje.
+    /// - Le notifica al Central Driver que arranco el viaje enviandole una posición infinita.
+    /// - Se mueve hasta la posición del pasajero.
+    /// - Le notifica al Central Driver que llego a la posición del pasajero
+    /// - Se mueve hasta la posición de destino.
+    /// - Le notifica al Central Driver que llego a la posición destino
+    /// - Le notifica al Central Driver para que solicite el cobro del viaje realizado
+    /// - Limpia el estado del viaje.
     fn handle(&mut self, msg: TripStart, ctx: &mut Context<Self>) -> Self::Result {
         async fn go_to_pos(self_pos: &mut Position, destination: &Position) {
             while self_pos.x != destination.x || self_pos.y != destination.y {
@@ -190,6 +206,13 @@ pub struct CanHandleTrip {
 impl Handler<CanHandleTrip> for TripHandler {
     type Result = bool;
 
+
+    /// Maneja los mensajes recibidos desde el pasajero.
+    /// Simula la situación de si el driver puede tomar el viaje o no.
+    /// - Si el driver puede tomar el viaje, se conecta con el Central Driver y le envia el mensaje `ConnectWithPassenger` para que se conecte con el pasajero.
+    ///     - Si la conexión fue exitosa, le envia un mensaje al Central Driver con el mensaje `SendTripResponse` para notificarle al pasajero que el driver esta en camino.
+    ///     - Inicia el viaje enviando un mensaje al actor con el mensaje `TripStart`.
+    /// - Si el driver no puede tomar el viaje, retorna `false`.
     async fn handle(&mut self, msg: CanHandleTrip, _ctx: &mut Context<Self>) -> Self::Result {
         let mut rng = rand::thread_rng();
         let response = self.passenger_id.is_none()
@@ -252,6 +275,8 @@ pub struct ClearPassenger {
 impl Handler<ClearPassenger> for TripHandler {
     type Result = ();
 
+    /// Limpia el estado del viaje.
+    /// - Si el pasajero se desconecta, cancela la tarea del viaje.
     fn handle(&mut self, msg: ClearPassenger, ctx: &mut Context<Self>) -> Self::Result {
         if let None = self.passenger_id {
             return ();
@@ -277,6 +302,8 @@ pub struct ForceNotifyPosition {}
 impl Handler<ForceNotifyPosition> for TripHandler {
     type Result = ();
 
+    /// Notifica la posición al `CentralDriver`.
+    /// Lanza una tarea asincrónica en donde lockea la posición y notifica al `CentralDriver` la posición actual.
     fn handle(&mut self, _msg: ForceNotifyPosition, ctx: &mut Context<Self>) -> Self::Result {
         let recipient = self.central_driver.clone();
 

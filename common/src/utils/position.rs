@@ -10,10 +10,12 @@ pub struct Position {
 }
 
 impl Position {
+    /// Crea una nueva posición
     pub fn new(x: u32, y: u32) -> Self {
         Self { x, y }
     }
 
+    /// Crea una nueva posición con valores aleatorios
     pub fn random() -> Self {
         let mut rng = rand::thread_rng();
         Self {
@@ -22,6 +24,7 @@ impl Position {
         }
     }
 
+    /// Crea una nueva posición con valores infinitos
     pub fn infinity() -> Self {
         Self {
             x: u32::MAX,
@@ -29,6 +32,7 @@ impl Position {
         }
     }
 
+    /// Calcula la distancia entre dos posiciones
     pub fn distance_to(&self, p: &Position) -> u32 {
         if self.x > 100 || p.x > 100 || self.y > 100 || p.y > 100 {
             return u32::MAX;
@@ -40,6 +44,7 @@ impl Position {
         x + y
     }
 
+    /// Mueve la posición hacia otra posición
     pub fn go_to(&mut self, p: &Position) {
         let mut rng = rand::thread_rng();
         let step_x: u32 = rng.gen_range(0..=3);
@@ -55,12 +60,17 @@ impl Position {
         self.y = (self.y as i32 + move_y) as u32;
     }
 
+    /// Clona la posición
     pub fn clone(&self) -> Self {
         Self {
             x: self.x,
             y: self.y,
         }
     }
+
+    /// Simula un movimiento aleatorio
+    /// La posición se mueve en un rango de -10 a 10 en ambas coordenadas
+    /// Si la posición se sale de los límites, se ajusta a los mismos . Los límites son 0 y 100
 
     pub fn simulate(&mut self) {
         let mut rng = rand::thread_rng();

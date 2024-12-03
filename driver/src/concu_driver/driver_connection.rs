@@ -21,17 +21,22 @@ use super::{
 };
 
 pub struct DriverConnection {
-    // Direccion del actor CentralDriver
+    /// Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
-    // Stream para enviar al driver
+    /// Stream para enviar al driver
     driver_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
-    // ID del driver
+    /// ID del driver
     driver_id: u32,
-    //Guarda el ack recibido para cada pasajero
+    ///Guarda el ack recibido para cada pasajero
     responses: HashMap<u32, Option<bool>>,
 }
 
 impl DriverConnection {
+    /// Crea una nueva conexión con un driver con:
+    /// - La dirección del actor `CentralDriver`
+    /// - El stream de escritura
+    /// - ID del driver.
+    /// - Retorna la conexión con el driver.
     pub fn new(
         self_driver_addr: Addr<CentralDriver>,
         wstream: WriteHalf<TcpStream>,
@@ -47,6 +52,9 @@ impl DriverConnection {
 }
 
 impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
+
+    /// Maneja los mensajes recibidos desde los drivers.
+    /// Verifica si el mensaje es un mensaje válido y en caso de serlo envía un mensaje a si mismo "RecvAll" con el mensaje recibido.
     fn handle(&mut self, msg: Result<String, std::io::Error>, ctx: &mut Self::Context) {
         if let Ok(data) = msg {
             // log::debug!("recv {}", data);
@@ -57,6 +65,10 @@ impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
         }
     }
 
+    /// Maneja la finalización del flujo asociado al actor `DriverConnection`.
+    /// Envia un mensaje al actor `CentralDriver` para eliminar la conexión con el driver.
+    ///
+    /// Inicia una elección(porque puede ser la situación en la que el driver que se desconectó era el líder).
     fn finished(&mut self, _ctx: &mut Self::Context) {
         // if let Some(did) = self.driver_id {
         log::warn!("Broken pipe with driver {}", self.driver_id);
@@ -82,6 +94,10 @@ pub struct SendAll {
 
 impl Handler<SendAll> for DriverConnection {
     type Result = ();
+
+    /// Maneja el envío de mensajes a los drivers.
+    ///
+    /// Genera una tarea asincrónica en donde lockea el stream de escritura y escribe el mensaje en el stream.
 
     fn handle(&mut self, msg: SendAll, ctx: &mut Context<Self>) -> Self::Result {
         let message = msg.data + "\n";
@@ -113,6 +129,8 @@ pub struct RecvAll {
 impl Handler<RecvAll> for DriverConnection {
     type Result = Result<(), String>;
 
+    /// Maneja los mensajes recibidos desde los drivers.
+    /// Parsea el mensaje recibido segun el tipo de mensaje y envía un mensaje al actor `CentralDriver` con la respuesta o acción correspondiente.
     fn handle(&mut self, msg: RecvAll, _ctx: &mut Context<Self>) -> Self::Result {
         let data = serde_json::from_str(&msg.data).map_err(|e| {
             log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
@@ -210,6 +228,9 @@ pub struct CheckACK {
 impl Handler<CheckACK> for DriverConnection {
     type Result = Option<bool>;
 
+    /// Maneja los mensajes recibidos desde los drivers.
+    ///
+    /// Intentar eliminar el id del pasajero del hash en el caso de que exista y lo retorna. En el caso de que no exista retorna None.
     fn handle(&mut self, msg: CheckACK, _ctx: &mut Context<Self>) -> Self::Result {
         if let Some(res) = self.responses.remove(&msg.passenger_id) {
             return res;
