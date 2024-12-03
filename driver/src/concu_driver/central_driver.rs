@@ -96,17 +96,17 @@ impl CentralDriver {
     }
 
 
-    /// Busca un driver para un pasajero.
-    /// Obtiene los drivers cercanos a la posicion del pasajero.
-    /// Parsea el mensaje a enviar a los drivers cercanos.
-    /// Itera por cada uno de los drivers
-    /// - Si el driver es el mismo que el que recibe el mensaje, envia un mensaje al actor `TripHandler` para que maneje el viaje(sin necesidad de comunicarse por el stram).
-    /// - Si el driver no es el mismo que el que recibe el mensaje, le envía un mensaje "SendAll" al driver(comunicandose por el stream de escritura) con el mensaje parseado.
-    /// - Espera un tiempo para chequear si hubo respuesta del pasajero.
-    /// - Si el driver responde, envía un mensaje "CheckACK" al driver para verificar si el pasajero envio un ACK. En el caso que de que hubo respuesta del pasajero
+    /// Busca el driver que mejor se ajuste al pasajero que solicito el viaje.
+    /// Obtiene primero los drivers que se encuentren un radio válido al pasajero.
+    /// Parsea el mensaje a enviar a los drivers válidos.
+    /// Itera por cada uno de los drivers con la siguiente lógica:
+    /// - Si el driver válido es el mismo que está ejecutando la búsqueda, envia un mensaje al actor `TripHandler` para que maneje el viaje (sin necesidad de comunicarse por el stream).
+    /// - Si el driver válido no es si mismo, le envía un mensaje "SendAll" al driver (comunicandose por el stream de escritura) con el mensaje parseado.
+    /// - Espera un tiempo para chequear si hubo respuesta por parte del driver.
+    /// - Luego se envía un mensaje "CheckACK" al driver para verificar si el pasajero envio un ACK. En el caso que de que hubo respuesta del pasajero
     /// arranca el viaje.
     /// - Si el driver no responde, loggea un mensaje de error.
-    /// - Si no hay drivers disponibles cerca del pasajero, envía un mensaje al actor `CentralDriver` para que se conecte con el pasajero y le envía un mensaje "SendTripResponse" al pasajero con el estado del viaje y un detalle.
+    /// - En el caso de que ningún driver esté a un radio cercano del pasajero que solicito el viaje, se envía un mensaje al actor `CentralDriver` para que se conecte con el pasajero y le envía un mensaje "SendTripResponse" al pasajero con el estado del viaje (Error) y un detalle.
 
     async fn find_driver(
         driver_positions: &HashMap<u32, Position>,
