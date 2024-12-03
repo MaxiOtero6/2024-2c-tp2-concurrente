@@ -500,6 +500,8 @@ impl Handler<StartElection> for CentralDriver {
             }
         } else {
             let leader_id = self.id.clone();
+            let connection_with_drivers = self.connection_with_drivers.clone();
+            
             // Set timeout for responses
             self.election_timeout =
                 Some(ctx.run_later(ELECTION_TIMEOUT_DURATION, move |_, ctx| {
@@ -507,9 +509,9 @@ impl Handler<StartElection> for CentralDriver {
                     log::warn!("[ELECTION] No one answer the election");
                     ctx.notify(Coordinator { leader_id });
 
-                    for (_, driver) in &self.connection_with_drivers {
+                    for (_, driver) in &connection_with_drivers {
                         let parsed_data =
-                            serde_json::to_string(&DriverMessages::Coordinator { leader_id: self.id })
+                            serde_json::to_string(&DriverMessages::Coordinator { leader_id })
                                 .inspect_err(|e| {
                                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
                                 });
