@@ -148,7 +148,8 @@ echo -e "${CYAN}Test 4: One Driver and Two Passengers${WHITE}"
 boot_payment 1
 boot_driver_1 0 1.0
 boot_passenger_1_in_background 1 "(0,0)" "(10,10)"
-boot_passenger_2_in_background 2 "(0,0)" "(15,15)"
+sleep 1
+boot_passenger_2_in_background 2 "(2,2)" "(15,15)"
 wait "$PASSENGER_1_BACkGROUND_PID"
 assert_eq 0 $? "The exit code of the first passenger was not the expected one."
 wait "$PASSENGER_2_BACkGROUND_PID"
@@ -167,4 +168,39 @@ wait "$PASSENGER_1_BACkGROUND_PID"
 assert_eq 0 $? "The exit code of the first passenger was not the expected one."
 wait "$PASSENGER_2_BACkGROUND_PID"
 assert_eq 0 $? "The exit code of the second passenger was not the expected one."
+kill_all
+
+# Test 6: One driver and one passenger (The driver crashes and the passenger cancels the trip)
+echo -e "${CYAN}Test 6: One Driver and One Passenger (The driver crashes and the passenger fails to reach driver)${WHITE}"
+boot_payment 1
+boot_driver_1 0 1.0
+boot_passenger_1_in_background 1 "(0,0)" "(75,75)"
+sleep 2
+kill -9 "$DRIVER_1_BACKGROUND_PID"
+wait "$PASSENGER_1_BACkGROUND_PID"
+assert_eq 1 $? "The exit code of the passenger was not the expected one."
+kill_all
+
+# Test 7: One driver and two passengers (The first passenger crashes, then another passenger is accepted)
+echo -e "${CYAN}Test 7: One Driver and One Passenger (The first passenger crashes, then another passenger is accepted)${WHITE}"
+boot_payment 1
+boot_driver_1 0 1.0
+boot_passenger_1_in_background 1 "(0,0)" "(75,75)"
+sleep 2
+kill -9 "$PASSENGER_1_BACkGROUND_PID"
+sleep 5
+boot_passenger 2 "(5,5)" "(20,20)"
+assert_eq 0 $? "The exit code of the passenger was not the expected one."
+kill_all
+
+# Test 8: Two drivers and one passenger (First driver crashes, the second driver accepts the hanging trip)
+echo -e "${CYAN}Test 8: Two Drivers and One Passenger (First driver crashes, the second driver accepts the hanging trip)${WHITE}"
+boot_payment 1
+boot_driver_1 0 1.0
+boot_driver_2 1 1.0
+boot_passenger_1_in_background 1 "(0,0)" "(15,15)"
+sleep 1
+kill -9 "$DRIVER_1_BACKGROUND_PID"
+wait "$PASSENGER_1_BACkGROUND_PID"
+assert_eq 0 $? "The exit code of the passenger was not the expected one."
 kill_all
