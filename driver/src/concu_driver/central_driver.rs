@@ -95,7 +95,6 @@ impl CentralDriver {
         nearby_drivers
     }
 
-
     /// Busca el driver que mejor se ajuste al pasajero que solicito el viaje.
     /// Obtiene primero los drivers que se encuentren un radio válido al pasajero.
     /// Parsea el mensaje a enviar a los drivers válidos.
@@ -501,11 +500,10 @@ impl Handler<StartElection> for CentralDriver {
         } else {
             let leader_id = self.id.clone();
             let connection_with_drivers = self.connection_with_drivers.clone();
-            
+
             // Set timeout for responses
             self.election_timeout =
                 Some(ctx.run_later(ELECTION_TIMEOUT_DURATION, move |_, ctx| {
-
                     log::warn!("[ELECTION] No one answer the election");
                     ctx.notify(Coordinator { leader_id });
 
@@ -513,7 +511,12 @@ impl Handler<StartElection> for CentralDriver {
                         let parsed_data =
                             serde_json::to_string(&DriverMessages::Coordinator { leader_id })
                                 .inspect_err(|e| {
-                                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                                    log::error!(
+                                        "{}:{}, {}",
+                                        std::file!(),
+                                        std::line!(),
+                                        e.to_string()
+                                    )
                                 });
 
                         if let Ok(data) = parsed_data {
@@ -795,7 +798,6 @@ pub struct ConnectWithPassenger {
 #[async_handler]
 impl Handler<ConnectWithPassenger> for CentralDriver {
     type Result = Result<(), String>;
-
 
     /// Maneja los mensajes de conexion con un pasajero.
     /// Se conecta con el actor `PassengerConnection` y envia un mensaje "Connect" con el id del pasajero y su dirección
