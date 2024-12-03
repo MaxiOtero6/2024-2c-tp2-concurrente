@@ -66,7 +66,7 @@ async fn validate(id: u32) -> Result<(), Box<dyn Error>> {
 /// - En caso de error, se retorna un error
 async fn handle_payment_response(socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
     let mut reader = BufReader::new(socket);
-    let str_response = wait_driver_response(
+    let str_response = wait_response(
         &mut reader,
         "Error receiving validation response".parse().unwrap(),
     )
@@ -254,7 +254,7 @@ async fn wait_driver_responses(socket: &mut TcpStream) -> Result<Result<(), Stri
 
     loop {
         let string_response =
-            wait_driver_response(&mut reader, "Error receiving trip response".into()).await;
+            wait_response(&mut reader, "Error receiving trip response".into()).await;
 
         if let Err(res) = string_response {
             if request_delivered {
@@ -316,7 +316,7 @@ fn parse_trip_response(response: String) -> Result<TripMessages, String> {
 /// - Si la respuesta es vacía, retorna un error
 /// - Si la respuesta es un mensaje de error, retorna un error
 /// - Si la respuesta es un mensaje de éxito, retorna la respuesta
-async fn wait_driver_response(
+async fn wait_response(
     reader: &mut BufReader<&mut TcpStream>,
     error: String,
 ) -> Result<String, Box<dyn Error>> {
