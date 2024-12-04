@@ -1,13 +1,8 @@
-use std::sync::Arc;
-
-use actix::{
-    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
-    Message, StreamHandler,
-};
+use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, StreamHandler};
+use actix_async_handler::async_handler;
 use tokio::{
     io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHalf},
     net::TcpStream,
-    sync::Mutex,
 };
 use tokio_stream::wrappers::LinesStream;
 
@@ -23,7 +18,7 @@ pub struct PaymentConnection {
     /// Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
     /// Stream para enviar al payment
-    payment_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
+    payment_write_stream: Option<WriteHalf<TcpStream>>,
 }
 
 impl Actor for PaymentConnection {
@@ -35,7 +30,7 @@ impl PaymentConnection {
     fn new(central_driver: Addr<CentralDriver>, write_stream: WriteHalf<TcpStream>) -> Self {
         Self {
             central_driver,
-            payment_write_stream: Arc::new(Mutex::new(write_stream)),
+            payment_write_stream: Some(write_stream),
         }
     }
 
@@ -82,11 +77,7 @@ impl PaymentConnection {
     }
 }
 
-
-
-
 impl StreamHandler<Result<String, std::io::Error>> for PaymentConnection {
-
     /// Maneja los mensajes recibidos desde un flujo asíncrono asociado al actor `PaymentConnection`.
     ///
     /// Este método es parte de la implementación del trait `StreamHandler`, que permite que
@@ -114,7 +105,6 @@ impl StreamHandler<Result<String, std::io::Error>> for PaymentConnection {
         }
     }
 
-
     /// Maneja la finalización del flujo asociado al actor `PaymentConnection`.
     fn finished(&mut self, _ctx: &mut Self::Context) {}
 }
@@ -125,32 +115,47 @@ pub struct SendAll {
     pub data: String,
 }
 
+#[async_handler]
 impl Handler<SendAll> for PaymentConnection {
     type Result = ();
-
 
     /// Maneja el envío de mensajes al servicio de pagos.
     /// Clona el stream de escritura y envía el mensaje al servicio.
     /// Lanza una tarea asincrónica para enviar el mensaje donde lockea el stream de escritura
     /// y escribe el mensaje en el stream.
-    fn handle(&mut self, msg: SendAll, ctx: &mut Context<Self>) -> Self::Result {
+    async fn handle(&mut self, msg: SendAll, _ctx: &mut Context<Self>) -> Self::Result {
         let message = msg.data + "\n";
 
-        let w = self.payment_write_stream.clone();
-        wrap_future::<_, Self>(async move {
-            let mut writer = w.lock().await;
+        let w = self.payment_write_stream.take();
 
-            let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-            });
+        if let Some(mut wstream) = w {
+            let r = async move {
+                let _ = wstream
+                    .write_all(message.as_bytes())
+                    .await
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                    });
 
-            let _ = writer.flush().await.inspect_err(|e| {
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-            });
+                let _ = wstream.flush().await.inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
 
-            // log::debug!("sent {}", message);
-        })
-        .spawn(ctx);
+                wstream
+            }
+            .await;
+
+            // log::debug!("sent {}", message)
+
+            self.payment_write_stream = Some(r);
+        } else {
+            log::error!(
+                "{}:{}, {}",
+                std::file!(),
+                std::line!(),
+                "Must wait until the previous SendAll message is finished"
+            );
+        }
     }
 }
 

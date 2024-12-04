@@ -1,9 +1,5 @@
-use std::sync::Arc;
-
-use actix::{
-    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
-    Message, StreamHandler,
-};
+use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, StreamHandler};
+use actix_async_handler::async_handler;
 use common::utils::{
     consts::{HOST, MIN_PASSENGER_PORT},
     json_parser::TripMessages,
@@ -11,7 +7,6 @@ use common::utils::{
 use tokio::{
     io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader, WriteHalf},
     net::TcpStream,
-    sync::Mutex,
 };
 use tokio_stream::wrappers::LinesStream;
 
@@ -23,13 +18,12 @@ pub struct PassengerConnection {
     /// Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
     /// Stream para enviar al passenger
-    passenger_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
+    passenger_write_stream: Option<WriteHalf<TcpStream>>,
     /// ID del pasajero
     passenger_id: u32,
 }
 
 impl PassengerConnection {
-
     /// Crea una nueva conexión con un pasajero con:
     /// - La dirección del actor `CentralDriver`
     /// - El stream de escritura
@@ -41,11 +35,10 @@ impl PassengerConnection {
     ) -> Self {
         Self {
             central_driver,
-            passenger_write_stream: Arc::new(Mutex::new(write_stream)),
+            passenger_write_stream: Some(write_stream),
             passenger_id,
         }
     }
-
 
     /// Establece una conexión con un pasajero.
     /// Se conecta al puerto `MIN_PASSENGER_PORT + passenger_id` en el host `HOST`.
@@ -86,7 +79,6 @@ impl Actor for PassengerConnection {
 }
 
 impl StreamHandler<Result<String, std::io::Error>> for PassengerConnection {
-
     /// Maneja los mensajes recibidos por el stream de lectura del pasajero.
     /// Si el mensaje recibido es válido, lo envía al actor `RecvAll`.
     fn handle(&mut self, msg: Result<String, std::io::Error>, ctx: &mut Self::Context) {
@@ -120,29 +112,45 @@ pub struct SendAll {
     pub data: String,
 }
 
+#[async_handler]
 impl Handler<SendAll> for PassengerConnection {
     type Result = ();
 
     /// Envía un mensaje al pasajero.
     /// Lanza una tarea asincrónica en donde lockea el stream de escritura y escribe el mensaje en el stream.
-    fn handle(&mut self, msg: SendAll, ctx: &mut Context<Self>) -> Self::Result {
+    async fn handle(&mut self, msg: SendAll, _ctx: &mut Context<Self>) -> Self::Result {
         let message = msg.data + "\n";
 
-        let w = self.passenger_write_stream.clone();
-        wrap_future::<_, Self>(async move {
-            let mut writer = w.lock().await;
+        let w = self.passenger_write_stream.take();
 
-            let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-            });
+        if let Some(mut wstream) = w {
+            let r = async move {
+                let _ = wstream
+                    .write_all(message.as_bytes())
+                    .await
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                    });
 
-            let _ = writer.flush().await.inspect_err(|e| {
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-            });
+                let _ = wstream.flush().await.inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
 
-            // log::debug!("sent {}", message);
-        })
-        .spawn(ctx);
+                wstream
+            }
+            .await;
+
+            // log::debug!("sent {}", message)
+
+            self.passenger_write_stream = Some(r);
+        } else {
+            log::error!(
+                "{}:{}, {}",
+                std::file!(),
+                std::line!(),
+                "Must wait until the previous SendAll message is finished"
+            );
+        }
     }
 }
 
@@ -154,7 +162,6 @@ pub struct RecvAll {
 
 impl Handler<RecvAll> for PassengerConnection {
     type Result = Result<(), String>;
-
 
     /// Maneja los mensajes recibidos desde el pasajero.
     /// Parsea el mensaje recibido y envía un mensaje:

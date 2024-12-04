@@ -1,13 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
-use actix::{
-    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
-    Message, StreamHandler,
-};
+use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, StreamHandler};
+use actix_async_handler::async_handler;
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
     net::TcpStream,
-    sync::Mutex,
 };
 
 use crate::concu_driver::central_driver::RemoveDriverConnection;
@@ -24,7 +21,7 @@ pub struct DriverConnection {
     /// Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
     /// Stream para enviar al driver
-    driver_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
+    driver_write_stream: Option<WriteHalf<TcpStream>>,
     /// ID del driver
     driver_id: u32,
     ///Guarda el ack recibido para cada pasajero
@@ -44,7 +41,7 @@ impl DriverConnection {
     ) -> Self {
         DriverConnection {
             central_driver: self_driver_addr,
-            driver_write_stream: Arc::new(Mutex::new(wstream)),
+            driver_write_stream: Some(wstream),
             driver_id,
             responses: HashMap::new(),
         }
@@ -52,7 +49,6 @@ impl DriverConnection {
 }
 
 impl StreamHandler<Result<String, std::io::Error>> for DriverConnection {
-
     /// Maneja los mensajes recibidos desde los drivers.
     /// Verifica si el mensaje es un mensaje válido y en caso de serlo envía un mensaje a si mismo "RecvAll" con el mensaje recibido.
     fn handle(&mut self, msg: Result<String, std::io::Error>, ctx: &mut Self::Context) {
@@ -92,6 +88,7 @@ pub struct SendAll {
     pub data: String,
 }
 
+#[async_handler]
 impl Handler<SendAll> for DriverConnection {
     type Result = ();
 
@@ -99,24 +96,39 @@ impl Handler<SendAll> for DriverConnection {
     ///
     /// Genera una tarea asincrónica en donde lockea el stream de escritura y escribe el mensaje en el stream.
 
-    fn handle(&mut self, msg: SendAll, ctx: &mut Context<Self>) -> Self::Result {
+    async fn handle(&mut self, msg: SendAll, _ctx: &mut Context<Self>) -> Self::Result {
         let message = msg.data + "\n";
 
-        let w = self.driver_write_stream.clone();
-        wrap_future::<_, Self>(async move {
-            let mut writer = w.lock().await;
+        let w = self.driver_write_stream.take();
 
-            let _ = writer.write_all(message.as_bytes()).await.inspect_err(|e| {
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-            });
+        if let Some(mut wstream) = w {
+            let r = async move {
+                let _ = wstream
+                    .write_all(message.as_bytes())
+                    .await
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                    });
 
-            let _ = writer.flush().await.inspect_err(|e| {
-                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-            });
+                let _ = wstream.flush().await.inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
+
+                wstream
+            }
+            .await;
 
             // log::debug!("sent {}", message)
-        })
-        .spawn(ctx);
+
+            self.driver_write_stream = Some(r);
+        } else {
+            log::error!(
+                "{}:{}, {}",
+                std::file!(),
+                std::line!(),
+                "Must wait until the previous SendAll message is finished"
+            );
+        }
     }
 }
 
