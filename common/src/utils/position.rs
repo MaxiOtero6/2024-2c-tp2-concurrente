@@ -3,7 +3,7 @@ use std::u32;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     pub x: u32,
     pub y: u32,

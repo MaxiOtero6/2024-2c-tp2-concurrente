@@ -1,10 +1,9 @@
 use std::error::Error;
 
-use actix::System;
+use actix_rt::System;
 use tokio::join;
 
 use super::{central_driver::CentralDriver, connections_handler::DriverConnectionsHandler};
-
 
 /// Inicia el driver con el id pasado por parametro
 pub fn drive(id: u32) -> Result<(), Box<dyn Error>> {
