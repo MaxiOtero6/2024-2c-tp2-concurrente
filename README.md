@@ -501,7 +501,7 @@ Dados
 -   Passenger que quiere ir desde (3,3) -> (10, 10)
 
 El pasajero principalmente autoriza el pago con el servicio de Payment, al ser autorizado prosigue.
-Luego se conecta aleatoriamente con el driver 0, y le envia 'CommonMessages::Identification {id, type\_: 'P'}' y 'TripMessages::TripRequest {source: (3,3), destination: (10, 10)}'.
+Luego se conecta aleatoriamente con el driver 0, y le envia 'CommonMessages::Identification {id, type\_: 'P'}' y 'TripMessages::TripRequest {source: (3,3), destination: (10, 10)}' y 'Listening'.
 El driver 0 redirige la request al driver 3 (lider) y le responde al pasajero que su request fue entregada cerrando asi la conexion.
 El driver 3 lanza una tarea async la cual clona las posiciones de los drivers en ese instante, filtra los drivers mas cercanos, los ordena en orden de distancia ascendente y se queda con los ids ordenados. Luego va preguntando uno por uno si quieren tomar el viaje. En este caso, el mas cercano es el driver 1, el cual rechaza la solicitud, siguiendo por el driver 0 el cual acepta la solicitud, el driver 3 y el driver 2 estaban a una distancia mayor a MAX_DISTANCE.
 Entonces, el driver 0 se conecta con el pasajero avisandole que sera su chofer, le avisa cuando esta cerca y cuando se llega a destino.

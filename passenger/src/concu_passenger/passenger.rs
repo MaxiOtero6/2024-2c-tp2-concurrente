@@ -2,9 +2,7 @@ use rand::Rng;
 use std::{error::Error, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    join,
     net::TcpStream,
-    task,
 };
 
 use common::utils::json_parser::{CommonMessages, TripMessages};
@@ -112,16 +110,12 @@ async fn send_auth_message(id: &u32, socket: &mut TcpStream) -> Result<(), Box<d
     Ok(())
 }
 
-/// Crea un listener en un puerto específico y espera la conexión de un conductor por un período de tiempo.
-/// Si la conexión es exitosa, se espera la respuesta del conductor
-/// - Si la respuesta es afirmativa, el viaje fue completado y sale del loop
-/// - Si la respuesta es negativa, el viaje fue rechazado
-/// - Si no hay respuesta, se retorna un error
-///
-/// Si la conexión falla, se retorna un error.
-
-async fn listen_connections(id: u32) -> Result<Result<(), String>, String> {
+/// Crea un listener en un puerto específico
+/// socket: Socket TCP mediante el que se conecto al driver
+/// id: ID del pasajero
+async fn bind_listener(socket: &mut TcpStream, id: u32) -> Result<TcpListener, String> {
     let self_addr = format!("{}:{}", HOST, MIN_PASSENGER_PORT + id);
+
     let listener = TcpListener::bind(&self_addr).await.map_err(|e| {
         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
         e.to_string()
@@ -129,6 +123,20 @@ async fn listen_connections(id: u32) -> Result<Result<(), String>, String> {
 
     log::info!("My addr is {}", self_addr);
 
+    let _ = send_listening_notification(socket).await;
+
+    Ok(listener)
+}
+
+/// Espera la conexión de un conductor por un período de tiempo.
+/// Si la conexión es exitosa, se espera la respuesta del conductor
+/// - Si la respuesta es afirmativa, el viaje fue completado y sale del loop
+/// - Si la respuesta es negativa, el viaje fue rechazado
+/// - Si no hay respuesta, se retorna un error
+///
+/// Si la conexión falla, se retorna un error.
+
+async fn listen_connections(listener: &mut TcpListener) -> Result<Result<(), String>, String> {
     loop {
         let result = timeout(Duration::from_secs(10), listener.accept()).await;
 
@@ -162,19 +170,21 @@ async fn listen_connections(id: u32) -> Result<Result<(), String>, String> {
 /// Realiza una solicitud de viaje al servidor de conductores
 /// - Envia un mensaje de identificación
 /// - Envia un mensaje de solicitud de viaje
+/// - Crea un listener y envia un mensaje 'Listening'
 /// - Espera las respuestas de los conductores
-async fn make_request(trip_data: &TripData, socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+async fn make_request(
+    trip_data: &TripData,
+    socket: &mut TcpStream,
+) -> Result<TcpListener, Box<dyn Error>> {
     send_identification(&trip_data, socket).await?;
-
-    log::info!("Identification sent!");
 
     send_trip_request(socket, &trip_data).await?;
 
-    log::info!("Request sent!");
+    let listener = bind_listener(socket, trip_data.id).await?;
 
     wait_driver_responses(socket).await??;
 
-    Ok(())
+    Ok(listener)
 }
 
 /// Itera por cada uno de los puertos de los conductores, intentando conectarse a cada uno de ellos
@@ -200,36 +210,31 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
             Ok(socket) => socket,
         };
 
-        let listen_task = task::spawn(listen_connections(trip_data.id.clone()));
-
-        if let Err(e) = make_request(&trip_data, &mut socket).await {
-            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-            listen_task.abort();
-            continue;
-        }
-
-        let (listen_task_result,) = join!(listen_task);
-
-        match listen_task_result {
-            Ok(Err(e)) => {
-                log::error!("{}", e.to_string());
-                ports = (MIN_DRIVER_PORT..=MAX_DRIVER_PORT).collect();
-                continue;
-            } // Broken pipe
-            Ok(Ok(Ok(_))) => {
-                // Ok
-                ret = Ok(());
-                break;
-            }
-            Ok(Ok(Err(e))) => {
-                // Negative response from driver
-                log::error!("{}", e.to_string());
-                break;
-            }
+        match make_request(&trip_data, &mut socket).await {
             Err(e) => {
-                log::error!("{}", e.to_string());
-                ports = (MIN_DRIVER_PORT..=MAX_DRIVER_PORT).collect();
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                 continue;
+            }
+            Ok(mut listener) => {
+                let listen_result = async move { listen_connections(&mut listener).await }.await;
+
+                match listen_result {
+                    Err(e) => {
+                        log::error!("{}", e.to_string());
+                        ports = (MIN_DRIVER_PORT..=MAX_DRIVER_PORT).collect();
+                        continue;
+                    } // Broken pipe
+                    Ok(Ok(_)) => {
+                        // Ok
+                        ret = Ok(());
+                        break;
+                    }
+                    Ok(Err(e)) => {
+                        // Negative response from driver
+                        log::error!("{}", e.to_string());
+                        break;
+                    }
+                }
             }
         }
     }
@@ -237,7 +242,6 @@ async fn request(trip_data: TripData) -> Result<(), Box<dyn Error>> {
     ret
 }
 
-// TODO
 /// Espera las respuestas de los conductores dentro de un loop
 /// - Si la respuesta es afirmativa puede ser:
 ///    - Que el viaje fue aceptado  o completado  se sale del loop
@@ -312,7 +316,7 @@ fn parse_trip_response(response: String) -> Result<TripMessages, String> {
     Ok(response)
 }
 
-/// Espera una respuesta y la retorna 
+/// Espera una respuesta y la retorna
 /// - Si la respuesta es vacía, retorna un error
 /// - Si la respuesta es un mensaje de error, retorna un error
 /// - Si la respuesta es un mensaje de éxito, retorna la respuesta
@@ -347,6 +351,23 @@ async fn send_trip_request(
         .write_all((request + "\n").as_bytes())
         .await
         .inspect_err(|e| log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()))?;
+
+    log::info!("Request sent!");
+
+    Ok(())
+}
+
+/// Notifica al conductor que ya esta escuchando nuevas conexiones
+async fn send_listening_notification(socket: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+    let request = serde_json::to_string(&TripMessages::Listening {})?;
+
+    socket
+        .write_all((request + "\n").as_bytes())
+        .await
+        .inspect_err(|e| log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()))?;
+
+    log::info!("Listening notification sent!");
+
     Ok(())
 }
 
@@ -361,6 +382,8 @@ async fn send_identification(
     })?;
 
     socket.write_all((identification + "\n").as_bytes()).await?;
+
+    log::info!("Identification sent!");
+
     Ok(())
 }
-

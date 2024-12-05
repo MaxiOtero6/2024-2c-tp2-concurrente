@@ -166,7 +166,7 @@ impl Handler<RecvAll> for PassengerConnection {
     /// Maneja los mensajes recibidos desde el pasajero.
     /// Parsea el mensaje recibido y envía un mensaje:
     /// Si el mensaje es de tipo `TripRequest` envía un mensaje al `CentralDriver` con la respuesta.
-    /// Si el mensaje es de tipo `TripResponse` loggea un error.
+    /// Si el mensaje no es de tipo `TripRequest` loggea un error.
     fn handle(&mut self, msg: RecvAll, _ctx: &mut Context<Self>) -> Self::Result {
         let data = serde_json::from_str(&msg.data).map_err(|e| {
             log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
@@ -189,10 +189,7 @@ impl Handler<RecvAll> for PassengerConnection {
                     e.to_string()
                 })?,
 
-            TripMessages::TripResponse {
-                status: _,
-                detail: _,
-            } => log::error!("Why i'm receiving a trip response?"),
+            _ => log::error!("Why i'm receiving a this type of message {:?}", data),
         }
 
         Ok(())
