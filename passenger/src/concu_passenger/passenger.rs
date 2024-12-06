@@ -123,7 +123,10 @@ async fn bind_listener(socket: &mut TcpStream, id: u32) -> Result<TcpListener, S
 
     log::info!("My addr is {}", self_addr);
 
-    let _ = send_listening_notification(socket).await;
+    send_listening_notification(socket).await.map_err(|e| {
+        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+        e.to_string()
+    })?;
 
     Ok(listener)
 }
@@ -334,6 +337,7 @@ async fn wait_response(
     if str_response.is_empty() {
         return Err(error.into());
     }
+
     Ok(str_response)
 }
 
