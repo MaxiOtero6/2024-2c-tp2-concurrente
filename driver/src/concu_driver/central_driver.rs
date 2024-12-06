@@ -1,30 +1,24 @@
 use std::collections::HashMap;
 
-use actix::{
-    dev::ContextFutureSpawner, fut::wrap_future, Actor, Addr, AsyncContext, Context, Handler,
-    Message, SpawnHandle,
-};
+use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, SpawnHandle};
 use actix_async_handler::async_handler;
 use common::utils::{
     json_parser::{PaymentMessages, TripMessages, TripStatus},
     position::Position,
 };
-use rayon::{
-    iter::{IntoParallelIterator, ParallelIterator},
-    slice::ParallelSliceMut,
-};
-use tokio::time::sleep;
 
 use crate::concu_driver::{
-    consts::{MAX_DISTANCE, TAKE_TRIP_TIMEOUT_MS},
-    driver_connection::{CheckACK, SendAll},
+    driver_connection::SendAll,
     handle_trip::{ClearPassenger, ForceNotifyPosition},
     json_parser::DriverMessages,
 };
 
 use super::{
-    consts::ELECTION_TIMEOUT_DURATION, driver_connection::DriverConnection,
-    handle_trip::TripHandler, passenger_connection::PassengerConnection,
+    consts::ELECTION_TIMEOUT_DURATION,
+    driver_connection::DriverConnection,
+    driver_finder::{DriverACK, DriverFinder},
+    handle_trip::TripHandler,
+    passenger_connection::PassengerConnection,
     payment_connection::PaymentConnection,
 };
 
@@ -33,6 +27,8 @@ pub struct CentralDriver {
     trip_handler: Addr<TripHandler>,
     /// Direccion del actor PassengerConnection
     passengers: HashMap<u32, Addr<PassengerConnection>>,
+    /// Direcciones de los buscadores de drivers segun la id del pasajero
+    driver_finders: HashMap<u32, Addr<DriverFinder>>,
     /// Direcciones de los drivers segun su id
     connection_with_drivers: HashMap<u32, Addr<DriverConnection>>, // 0...N
     /// Posiciones de los demas drivers segun su id,
@@ -61,6 +57,7 @@ impl CentralDriver {
             trip_handler: TripHandler::new(ctx.address(), id).start(),
             passengers: HashMap::new(),
             election_timeout: None,
+            driver_finders: HashMap::new(),
         })
     }
 
@@ -71,167 +68,6 @@ impl CentralDriver {
         }
 
         false
-    }
-
-    /// Filtra los drivers cercanos a una posicion dada.
-    fn filter_nearby_drivers(
-        driver_positions: &HashMap<u32, Position>,
-        source: &Position,
-    ) -> Vec<u32> {
-        let mut distances = driver_positions
-            .clone()
-            .into_par_iter()
-            .map(|(k, v)| (k, v.distance_to(&source)))
-            .filter(|(_, v)| *v <= MAX_DISTANCE)
-            .collect::<Vec<(u32, u32)>>();
-
-        distances.par_sort_by(|(_, a), (_, b)| a.cmp(&b));
-
-        let nearby_drivers = distances
-            .into_par_iter()
-            .map(|(k, _)| k)
-            .collect::<Vec<u32>>();
-
-        nearby_drivers
-    }
-
-    /// Busca el driver que mejor se ajuste al pasajero que solicito el viaje.
-    /// Obtiene primero los drivers que se encuentren un radio válido al pasajero.
-    /// Parsea el mensaje a enviar a los drivers válidos.
-    /// Itera por cada uno de los drivers con la siguiente lógica:
-    /// - Si el driver válido es el mismo que está ejecutando la búsqueda, envia un mensaje al actor `TripHandler` para que maneje el viaje (sin necesidad de comunicarse por el stream).
-    /// - Si el driver válido no es si mismo, le envía un mensaje "SendAll" al driver (comunicandose por el stream de escritura) con el mensaje parseado.
-    /// - Espera un tiempo para chequear si hubo respuesta por parte del driver.
-    /// - Luego se envía un mensaje "CheckACK" al driver para verificar si el pasajero envio un ACK. En el caso que de que hubo respuesta del pasajero
-    /// arranca el viaje.
-    /// - Si el driver no responde, loggea un mensaje de error.
-    /// - En el caso de que ningún driver esté a un radio cercano del pasajero que solicito el viaje, se envía un mensaje al actor `CentralDriver` para que se conecte con el pasajero y le envía un mensaje "SendTripResponse" al pasajero con el estado del viaje (Error) y un detalle.
-
-    async fn find_driver(
-        driver_positions: &HashMap<u32, Position>,
-        id: &u32,
-        connection_with_drivers: &HashMap<u32, Addr<DriverConnection>>,
-        msg: &FindDriver,
-        trip_handler: &Addr<TripHandler>,
-        self_addr: &Addr<Self>,
-    ) {
-        let nearby_drivers = Self::filter_nearby_drivers(driver_positions, &msg.source);
-
-        log::debug!(
-            "[TRIP] Nearby drivers for passenger {}: {:?}",
-            msg.passenger_id,
-            nearby_drivers
-        );
-
-        let parsed_data = serde_json::to_string(&DriverMessages::CanHandleTrip {
-            passenger_id: msg.passenger_id,
-            passenger_location: msg.source,
-            destination: msg.destination,
-        })
-        .inspect_err(|e| {
-            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-        });
-
-        if let Ok(data) = &parsed_data {
-            for did in nearby_drivers {
-                log::info!(
-                    "[TRIP] Asking driver {} if it will take the trip for passenger {}",
-                    did,
-                    msg.passenger_id
-                );
-                if did == *id {
-                    let res = trip_handler
-                        .send(super::handle_trip::CanHandleTrip {
-                            passenger_id: msg.passenger_id,
-                            passenger_location: msg.source,
-                            destination: msg.destination,
-                            self_id: *id,
-                        })
-                        .await
-                        .map_err(|e| {
-                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                            e.to_string()
-                        });
-
-                    if let Ok(value) = res {
-                        if value {
-                            log::info!(
-                                "[TRIP] Driver {} will take the trip for passenger {}",
-                                did,
-                                msg.passenger_id
-                            );
-
-                            return;
-                        }
-                    }
-                }
-
-                if let Some(driver) = connection_with_drivers.get(&did) {
-                    let _ = driver
-                        .try_send(SendAll { data: data.clone() })
-                        .inspect_err(|e| {
-                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                        });
-
-                    sleep(TAKE_TRIP_TIMEOUT_MS).await;
-
-                    let res = driver
-                        .send(CheckACK {
-                            passenger_id: msg.passenger_id,
-                        })
-                        .await
-                        .map_err(|e| {
-                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                            e.to_string()
-                        });
-
-                    if let Ok(ack) = res {
-                        if let Some(value) = ack {
-                            if value {
-                                log::info!(
-                                    "[TRIP] Driver {} will take the trip for passenger {}",
-                                    did,
-                                    msg.passenger_id
-                                );
-
-                                return;
-                            }
-                        }
-                    }
-                }
-
-                log::debug!(
-                    "[TRIP] Driver {} can not take the trip or did not answer",
-                    did
-                )
-            }
-        }
-
-        let detail = format!("There are no drivers available near your location");
-
-        log::info!("There are no drivers near passenger {}", msg.passenger_id);
-
-        match self_addr
-            .send(ConnectWithPassenger {
-                passenger_id: msg.passenger_id,
-            })
-            .await
-        {
-            Ok(Ok(_)) => {
-                let _ = self_addr
-                    .try_send(SendTripResponse {
-                        status: TripStatus::Error,
-                        detail,
-                        passenger_id: msg.passenger_id,
-                    })
-                    .inspect_err(|e| {
-                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                    });
-            }
-            _ => {
-                log::error!("Can not connect with passenger {}", msg.passenger_id);
-            }
-        }
     }
 }
 
@@ -693,7 +529,7 @@ impl Handler<FindDriver> for CentralDriver {
     type Result = ();
 
     /// Maneja los mensajes de busqueda de un driver.
-    /// Genera una tarea asincrónica para buscar un driver para un pasajero.
+    /// Genera un actor DriverFinder y lo inicia para buscar un driver a un pasajero.
     fn handle(&mut self, msg: FindDriver, ctx: &mut Context<Self>) -> Self::Result {
         if !self.im_leader() {
             return;
@@ -701,85 +537,117 @@ impl Handler<FindDriver> for CentralDriver {
 
         log::debug!("[TRIP] Finding a driver for passenger {}", msg.passenger_id);
 
-        let driver_positions = self.driver_positions.clone();
-        let id = self.id.clone();
-        let connection_with_drivers = self.connection_with_drivers.clone();
-        let trip_handler = self.trip_handler.clone();
-        let self_addr = ctx.address().clone();
-
-        wrap_future::<_, Self>(async move {
-            CentralDriver::find_driver(
-                &driver_positions,
-                &id,
-                &connection_with_drivers,
-                &msg,
-                &trip_handler,
-                &self_addr,
+        self.driver_finders.insert(
+            msg.passenger_id,
+            DriverFinder::new(
+                ctx.address().clone(),
+                msg.passenger_id,
+                msg.source,
+                msg.destination,
+                self.driver_positions.clone(),
             )
-            .await;
-        })
-        .spawn(ctx);
-
-        ()
+            .start(),
+        );
     }
 }
 
 #[derive(Message)]
-#[rtype(result = "Result<(), String>")]
+#[rtype(result = "()")]
 pub struct CanHandleTrip {
     pub passenger_id: u32,
     pub source: Position,
     pub destination: Position,
+    pub driver_id: u32,
 }
 
 impl Handler<CanHandleTrip> for CentralDriver {
-    type Result = Result<(), String>;
+    type Result = ();
 
-    /// Maneja los mensajes de si puede manejar un viaje.
-    /// Manda un mensaje al actor `TripHandler` para validar si puede  manejar el viaje y espera la respuesta.
-    /// - Si no hay ningun error le envia al lider el mensaje CanHandleTripACK con el id del cliente y
-    /// el estado del viaje
-    fn handle(&mut self, msg: CanHandleTrip, ctx: &mut Context<Self>) -> Self::Result {
-        let leader_id = self.leader_id.clone();
-        let connection_with_drivers = self.connection_with_drivers.clone();
-        let trip_handler = self.trip_handler.clone();
-        let self_id = self.id.clone();
-
-        wrap_future::<_, Self>(async move {
-            let res = trip_handler
-                .send(super::handle_trip::CanHandleTrip {
+    /// Redirige la consulta para tomar un viaje. En caso de querer consultar a el mismo, redirige la consulta
+    /// al TripHandler, en cambio, envia el mensaje al DriverConnection indicado.
+    fn handle(&mut self, msg: CanHandleTrip, _ctx: &mut Context<Self>) -> Self::Result {
+        if msg.driver_id == self.id {
+            let _ = self
+                .trip_handler
+                .try_send(super::handle_trip::CanHandleTrip {
                     passenger_id: msg.passenger_id,
                     passenger_location: msg.source,
                     destination: msg.destination,
-                    self_id,
+                    self_id: self.id,
                 })
-                .await
                 .inspect_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                })
-                .unwrap_or(false);
+                });
 
-            if let Some(lid) = &leader_id {
-                if let Some(leader) = connection_with_drivers.get(lid) {
-                    let parsed_data = serde_json::to_string(&DriverMessages::CanHandleTripACK {
-                        response: res,
-                        passenger_id: msg.passenger_id,
+            return;
+        }
+
+        if let Some(driver) = self.connection_with_drivers.get(&msg.driver_id) {
+            let parsed_data = serde_json::to_string(&DriverMessages::CanHandleTrip {
+                passenger_location: msg.source,
+                passenger_id: msg.passenger_id,
+                destination: msg.destination,
+                driver_id: msg.driver_id,
+            })
+            .inspect_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            });
+
+            if let Ok(data) = parsed_data {
+                let _ = driver.try_send(SendAll { data }).inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                });
+            }
+        }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct CanHandleTripACK {
+    pub passenger_id: u32,
+    pub response: bool,
+    pub driver_id: u32,
+}
+
+impl Handler<CanHandleTripACK> for CentralDriver {
+    type Result = ();
+
+    /// Redirige al DriverFinder que consulto acerca de tomar el viaje.
+    fn handle(&mut self, msg: CanHandleTripACK, _ctx: &mut Context<Self>) -> Self::Result {
+        if self.im_leader() {
+            if let Some(df) = self.driver_finders.get(&msg.passenger_id) {
+                let _ = df
+                    .try_send(DriverACK {
+                        response: msg.response,
+                        driver_id: msg.driver_id,
                     })
                     .inspect_err(|e| {
                         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                     });
+            }
 
-                    if let Ok(data) = parsed_data {
-                        let _ = leader.try_send(SendAll { data }).inspect_err(|e| {
-                            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
-                        });
-                    }
+            return;
+        }
+
+        if let Some(lid) = &self.leader_id {
+            if let Some(leader) = self.connection_with_drivers.get(lid) {
+                let parsed_data = serde_json::to_string(&DriverMessages::CanHandleTripACK {
+                    response: msg.response,
+                    passenger_id: msg.passenger_id,
+                    driver_id: self.id,
+                })
+                .inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                });
+
+                if let Ok(data) = parsed_data {
+                    let _ = leader.try_send(SendAll { data }).inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                    });
                 }
             }
-        })
-        .spawn(ctx);
-
-        Ok(())
+        }
     }
 }
 
@@ -856,6 +724,26 @@ impl Handler<SendTripResponse> for CentralDriver {
                         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                     });
             }
+        }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct RemoveDriverFinder {
+    /// Id del pasajero
+    pub passenger_id: u32,
+}
+
+impl Handler<RemoveDriverFinder> for CentralDriver {
+    type Result = ();
+
+    /// Elimina un DriverFinder si este existe
+    ///  - passenger_id: ID del pasajero que pidio el viaje
+
+    fn handle(&mut self, msg: RemoveDriverFinder, _ctx: &mut Context<Self>) -> Self::Result {
+        if let Some(_) = self.driver_finders.remove(&msg.passenger_id) {
+            log::info!("Removing driver finder {}", msg.passenger_id);
         }
     }
 }

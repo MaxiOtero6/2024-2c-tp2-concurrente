@@ -289,6 +289,11 @@ impl DriverConnectionsHandler {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                 e.to_string()
             })?;
+
+            w.flush().await.map_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                e.to_string()
+            })?;
         }
 
         Ok(())

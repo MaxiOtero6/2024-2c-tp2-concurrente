@@ -131,6 +131,7 @@ impl Handler<SendAll> for PassengerConnection {
                     .inspect_err(|e| {
                         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
                     });
+                // .inspect(|_| log::debug!("Sent"));
 
                 let _ = wstream.flush().await.inspect_err(|e| {
                     log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
@@ -139,8 +140,6 @@ impl Handler<SendAll> for PassengerConnection {
                 wstream
             }
             .await;
-
-            // log::debug!("sent {}", message)
 
             self.passenger_write_stream = Some(r);
         } else {

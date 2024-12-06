@@ -80,10 +80,15 @@ impl TripHandler {
 #[derive(Message)]
 #[rtype(result = "()")]
 struct GoTo {
+    /// Posicion actual del driver
     current_position: Position,
+    /// Posicion destino siguiente
     next_position: Position,
+    /// Id del pasajero
     passenger_id: u32,
+    /// Posicion inicial del pasajero
     passenger_location: Position,
+    /// Posicion destino del pasajero
     destination: Position,
 }
 
@@ -113,18 +118,20 @@ impl Handler<GoTo> for TripHandler {
         );
 
         if current_position == msg.passenger_location {
-            let _ = self
-                .central_driver
-                .try_send(SendTripResponse {
-                    passenger_id: msg.passenger_id,
-                    status: TripStatus::Info,
-                    detail: format!("I am at your door, come out!"),
-                })
-                .inspect_err(|e| {
-                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                });
+            if current_position != msg.current_position {
+                let _ = self
+                    .central_driver
+                    .try_send(SendTripResponse {
+                        passenger_id: msg.passenger_id,
+                        status: TripStatus::Info,
+                        detail: format!("I am at your door, come out!"),
+                    })
+                    .inspect_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                    });
 
-            log::info!("[TRIP] Passenger {} picked up", msg.passenger_id);
+                log::info!("[TRIP] Passenger {} picked up", msg.passenger_id);
+            }
 
             ctx.notify_later(
                 GoTo {
@@ -191,17 +198,21 @@ impl Handler<GoTo> for TripHandler {
 }
 
 #[derive(Message)]
-#[rtype(result = "bool")]
+#[rtype(result = "()")]
 pub struct CanHandleTrip {
+    /// Id del pasajero
     pub passenger_id: u32,
+    /// Posicion inicial del pasajero
     pub passenger_location: Position,
+    /// Posicion destino del pasajero
     pub destination: Position,
+    /// Id de este driver
     pub self_id: u32,
 }
 
 #[async_handler]
 impl Handler<CanHandleTrip> for TripHandler {
-    type Result = bool;
+    type Result = ();
 
     /// Maneja los mensajes recibidos desde el pasajero.
     /// Simula la situación de si el driver puede tomar el viaje o no.
@@ -209,7 +220,7 @@ impl Handler<CanHandleTrip> for TripHandler {
     ///     - Si la conexión fue exitosa, le envia un mensaje al Central Driver con el mensaje `SendTripResponse` para notificarle al pasajero que el driver esta en camino.
     ///     - Ademas de notificarle que se encuentra en el 'infinito' con el fin de que no sea tomado en cuenta para proximos viajes
     ///     - Inicia el viaje enviando un mensaje al actor con el mensaje `GoTo`.
-    /// - Si el driver no puede tomar el viaje, retorna `false`.
+    /// - Si el driver no puede tomar el viaje, retorna `false` al CentralDriver con el mensaje 'CanHandleTripACK'.
     async fn handle(&mut self, msg: CanHandleTrip, _ctx: &mut Context<Self>) -> Self::Result {
         let mut rng = rand::thread_rng();
         let response = self.passenger_id.is_none()
@@ -219,6 +230,9 @@ impl Handler<CanHandleTrip> for TripHandler {
                     .parse()
                     .unwrap_or(DEFAULT_TAKE_TRIP_PROBABILTY),
             );
+
+        let pid = msg.passenger_id.clone();
+        let did = msg.self_id.clone();
 
         let res = if response {
             let result = self
@@ -287,14 +301,23 @@ impl Handler<CanHandleTrip> for TripHandler {
             false
         };
 
-        res
+        let _ = self
+            .central_driver
+            .try_send(super::central_driver::CanHandleTripACK {
+                passenger_id: pid,
+                response: res,
+                driver_id: did,
+            })
+            .inspect_err(|e| log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string()));
     }
 }
 
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct ClearPassenger {
+    /// Si el pasajero se desconecto
     pub disconnected: bool,
+    /// Id del pasajero
     pub passenger_id: u32,
 }
 
