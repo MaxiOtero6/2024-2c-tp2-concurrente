@@ -18,6 +18,10 @@ pub fn validate_args() -> Result<TripData, String> {
         let destination_x: u32 = captures[4].parse().expect("Invalid destination X ");
         let destination_y: u32 = captures[5].parse().expect("Invalid destination Y ");
 
+        if origin_x == destination_x && origin_y == destination_y {
+            return Err("You can't go to the same place you are right now!".into());
+        }
+
         Ok(TripData {
             id,
             origin: Position::new(origin_x, origin_y),
