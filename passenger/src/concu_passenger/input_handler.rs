@@ -3,6 +3,7 @@ use common::utils::position::Position;
 use regex::Regex;
 use std::env;
 
+/// Valida y parsea los argumentos recibidos por stdin
 pub fn validate_args() -> Result<TripData, String> {
     let args: Vec<String> = env::args().skip(1).collect();
     let command = args.join(" ");
