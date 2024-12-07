@@ -118,20 +118,18 @@ impl Handler<GoTo> for TripHandler {
         );
 
         if current_position == msg.passenger_location {
-            if current_position != msg.current_position {
-                let _ = self
-                    .central_driver
-                    .try_send(SendTripResponse {
-                        passenger_id: msg.passenger_id,
-                        status: TripStatus::Info,
-                        detail: format!("I am at your door, come out!"),
-                    })
-                    .inspect_err(|e| {
-                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
-                    });
+            let _ = self
+                .central_driver
+                .try_send(SendTripResponse {
+                    passenger_id: msg.passenger_id,
+                    status: TripStatus::Info,
+                    detail: format!("I am at your door, come out!"),
+                })
+                .inspect_err(|e| {
+                    log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string())
+                });
 
-                log::info!("[TRIP] Passenger {} picked up", msg.passenger_id);
-            }
+            log::info!("[TRIP] Passenger {} picked up", msg.passenger_id);
 
             ctx.notify_later(
                 GoTo {
