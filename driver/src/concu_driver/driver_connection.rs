@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, StreamHandler};
 use actix_async_handler::async_handler;
 use tokio::{
@@ -11,8 +9,8 @@ use crate::concu_driver::central_driver::RemoveDriverConnection;
 
 use super::{
     central_driver::{
-        Alive, CanHandleTrip, CentralDriver, Coordinator, Election, RedirectNewTrip,
-        SetDriverPosition, StartElection,
+        Alive, CanHandleTrip, CanHandleTripACK, CentralDriver, Coordinator, Election,
+        RedirectNewTrip, SetDriverPosition, StartElection,
     },
     json_parser::DriverMessages,
 };
@@ -24,8 +22,6 @@ pub struct DriverConnection {
     driver_write_stream: Option<WriteHalf<TcpStream>>,
     /// ID del driver
     driver_id: u32,
-    ///Guarda el ack recibido para cada pasajero
-    responses: HashMap<u32, Option<bool>>,
 }
 
 impl DriverConnection {
@@ -43,7 +39,6 @@ impl DriverConnection {
             central_driver: self_driver_addr,
             driver_write_stream: Some(wstream),
             driver_id,
-            responses: HashMap::new(),
         }
     }
 }
@@ -192,12 +187,14 @@ impl Handler<RecvAll> for DriverConnection {
                 passenger_id,
                 passenger_location,
                 destination,
+                driver_id,
             } => {
                 self.central_driver
                     .try_send(CanHandleTrip {
                         passenger_id,
                         source: passenger_location,
                         destination,
+                        driver_id,
                     })
                     .map_err(|e| {
                         log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
@@ -207,8 +204,18 @@ impl Handler<RecvAll> for DriverConnection {
             DriverMessages::CanHandleTripACK {
                 response,
                 passenger_id,
+                driver_id,
             } => {
-                self.responses.insert(passenger_id, Some(response));
+                self.central_driver
+                    .try_send(CanHandleTripACK {
+                        response,
+                        passenger_id,
+                        driver_id,
+                    })
+                    .map_err(|e| {
+                        log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                        e.to_string()
+                    })?;
             }
             DriverMessages::TripRequest {
                 passenger_id,
@@ -228,26 +235,5 @@ impl Handler<RecvAll> for DriverConnection {
         }
 
         Ok(())
-    }
-}
-
-#[derive(Message)]
-#[rtype(result = "Option<bool>")]
-pub struct CheckACK {
-    pub passenger_id: u32,
-}
-
-impl Handler<CheckACK> for DriverConnection {
-    type Result = Option<bool>;
-
-    /// Maneja los mensajes recibidos desde los drivers.
-    ///
-    /// Intentar eliminar el id del pasajero del hash en el caso de que exista y lo retorna. En el caso de que no exista retorna None.
-    fn handle(&mut self, msg: CheckACK, _ctx: &mut Context<Self>) -> Self::Result {
-        if let Some(res) = self.responses.remove(&msg.passenger_id) {
-            return res;
-        }
-
-        None
     }
 }

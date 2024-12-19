@@ -47,8 +47,8 @@ impl Position {
     /// Mueve la posición hacia otra posición
     pub fn go_to(&mut self, p: &Position) {
         let mut rng = rand::thread_rng();
-        let step_x: u32 = rng.gen_range(0..=3);
-        let step_y: u32 = rng.gen_range(0..=3);
+        let step_x: u32 = rng.gen_range(1..=3);
+        let step_y: u32 = rng.gen_range(1..=3);
 
         let dx = p.x as i32 - self.x as i32;
         let dy = p.y as i32 - self.y as i32;

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use actix::{Actor, Addr, AsyncContext};
 use common::utils::{
     consts::{HOST, MAX_DRIVER_PORT, MIN_DRIVER_PORT},
@@ -7,6 +9,7 @@ use tokio::{
     io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf},
     net::{TcpListener, TcpStream},
     task::JoinHandle,
+    time::timeout,
 };
 use tokio_stream::wrappers::LinesStream;
 
@@ -20,7 +23,6 @@ use super::{
 pub struct DriverConnectionsHandler;
 
 impl DriverConnectionsHandler {
-    
     /// Corre el setUp del driver a la hora de crearse
     pub fn run(
         id: u32,
@@ -29,9 +31,8 @@ impl DriverConnectionsHandler {
         actix::spawn(async move { Self::setup(&central_driver_addr, id).await })
     }
 
-    
     /// Conecta a todos los drivers
-    /// 
+    ///
     /// Mientras el driver_id sea menor o igual al maximo de drivers, se conecta a cada uno
     async fn connect_all_drivers(
         self_id: u32,
@@ -75,8 +76,8 @@ impl DriverConnectionsHandler {
     /// - Se conecta con todos los drivers
     /// - Comienza una nueva elección
     /// - Se pone a escuchar por nuevas conexiones
-    /// 
-    /// Puede tener dos posibles conexiones: 
+    ///
+    /// Puede tener dos posibles conexiones:
     ///  - Con un driver: Se crea un nuevo actor DriverConnection y se le pasa un stream de lineas para que escuche los mensajes
     /// - Con un pasajero: Se lee del stream para ver si recibio algun mensaje y lo handlea como debe
     async fn setup(central_driver_addr: &Addr<CentralDriver>, id: u32) -> Result<(), String> {
@@ -143,7 +144,8 @@ impl DriverConnectionsHandler {
                     }
                     'P' => {
                         let _ =
-                            Self::handle_passenger_connection(central_driver_addr, w, id, reader).await;
+                            Self::handle_passenger_connection(central_driver_addr, w, id, reader)
+                                .await;
                     }
                     _ => (),
                 },
@@ -173,15 +175,14 @@ impl DriverConnectionsHandler {
                 e.to_string()
             })
     }
-    
-    
+
     /// Conecta con un pasajero
-    /// Lee del strem para ver si recibio algun mensaje. 
-    /// - En el caso de recirlo lo parsea y le envia el mensaje RedirectTrip al central_driver
-    /// - En el caso de no recibirlo, devuelve un error
-    /// 
-    /// Luego se envia un mensaje de confirmacion al pasajero de que su viaje esta siendo procesado 
-    /// 
+    /// Lee del strem para ver si recibio algun mensaje.
+    /// - En el caso de recirlo lo parsea y espera otro mensaje 'Listening', luego le envia el mensaje RedirectTrip al central_driver
+    /// - En el caso de no recibir ambos, devuelve un error
+    ///
+    /// Luego se envia un mensaje de confirmacion al pasajero de que su viaje esta siendo procesado
+    ///
     async fn handle_passenger_connection(
         central_driver_addr: &Addr<CentralDriver>,
         mut w: WriteHalf<TcpStream>,
@@ -212,11 +213,50 @@ impl DriverConnectionsHandler {
             e.to_string()
         })?;
 
-        match response {
+        let trip_data = match response {
             TripMessages::TripRequest {
                 source,
                 destination,
-            } => central_driver_addr
+            } => (source, destination),
+            _ => {
+                log::error!("{}:{}, TripRequest expected", std::file!(), std::line!());
+                return Err("TripRequest expected".into());
+            }
+        };
+
+        let (source, destination) = trip_data;
+
+        let mut listen_message = String::new();
+
+        let reader_ret = timeout(
+            Duration::from_millis(500),
+            reader.read_line(&mut listen_message),
+        )
+        .await
+        .map_err(|e| {
+            log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+            e.to_string()
+        })?;
+
+        if reader_ret.is_err() || listen_message.is_empty() {
+            log::error!("Error receiving listening notification");
+            return Err("Error receiving listening notification".into());
+        }
+
+        let listen_response: TripMessages = serde_json::from_str(&listen_message).map_err(|e| {
+            log::error!(
+                "{}:{}, {}, str: {}, len: {}",
+                std::file!(),
+                std::line!(),
+                e.to_string(),
+                listen_message,
+                listen_message.len()
+            );
+            e.to_string()
+        })?;
+
+        match listen_response {
+            TripMessages::Listening {} => central_driver_addr
                 .try_send(RedirectNewTrip {
                     passenger_id,
                     source,
@@ -227,10 +267,14 @@ impl DriverConnectionsHandler {
                     e.to_string()
                 })?,
             _ => {
-                log::error!("{}:{}, TripRequest expected", std::file!(), std::line!());
-                return Err("TripRequest expected".into());
+                log::error!(
+                    "{}:{}, Listening notification expected",
+                    std::file!(),
+                    std::line!()
+                );
+                return Err("Listening notification expected".into());
             }
-        }
+        };
 
         let parsed_data = serde_json::to_string(&TripMessages::TripResponse {
             status: common::utils::json_parser::TripStatus::RequestDelivered,
@@ -242,6 +286,11 @@ impl DriverConnectionsHandler {
 
         if let Ok(data) = parsed_data {
             w.write_all((data + "\n").as_bytes()).await.map_err(|e| {
+                log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
+                e.to_string()
+            })?;
+
+            w.flush().await.map_err(|e| {
                 log::error!("{}:{}, {}", std::file!(), std::line!(), e.to_string());
                 e.to_string()
             })?;

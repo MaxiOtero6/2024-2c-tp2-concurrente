@@ -3,6 +3,7 @@ use common::utils::position::Position;
 use regex::Regex;
 use std::env;
 
+/// Valida y parsea los argumentos recibidos por stdin
 pub fn validate_args() -> Result<TripData, String> {
     let args: Vec<String> = env::args().skip(1).collect();
     let command = args.join(" ");
@@ -17,6 +18,10 @@ pub fn validate_args() -> Result<TripData, String> {
         let origin_y: u32 = captures[3].parse().expect("Invalid origin Y ");
         let destination_x: u32 = captures[4].parse().expect("Invalid destination X ");
         let destination_y: u32 = captures[5].parse().expect("Invalid destination Y ");
+
+        if origin_x == destination_x && origin_y == destination_y {
+            return Err("You can't go to the same place you are right now!".into());
+        }
 
         Ok(TripData {
             id,

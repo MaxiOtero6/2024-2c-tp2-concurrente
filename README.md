@@ -32,6 +32,8 @@ Dentro del proceso Driver encontramos los actores:
 
 -   DriverConnection: Se responsabiliza de las comunicaciones mediante sockets con los demas Drivers, hay una instancia de este actor por cada Driver que exista.
 
+-   DriverFinder: Se responsabiliza de filtrar, ordenar y consultar a los drivers mas cercanos si quieren tomar el viaje.
+
 -   PassengerConnection: Se responsabiliza de las comunicaciones mediante sockets con un Passenger
 
 -   PaymentConnection: Se responsabiliza de las comunicaciones mediante sockets con el servicio de Payment
@@ -40,20 +42,22 @@ Estructura del Central Driver:
 
 ```Rust
 pub struct CentralDriver {
-    // Direccion del actor TripHandler
+    /// Direccion del actor TripHandler
     trip_handler: Addr<TripHandler>,
-    // Direccion del actor PassengerConnection
-    passengers: Arc<Mutex<HashMap<u32, Addr<PassengerConnection>>>>,
-    // Direcciones de los drivers segun su id
+    /// Direccion del actor PassengerConnection
+    passengers: HashMap<u32, Addr<PassengerConnection>>,
+    /// Direcciones de los buscadores de drivers segun la id del pasajero
+    driver_finders: HashMap<u32, Addr<DriverFinder>>,
+    /// Direcciones de los drivers segun su id
     connection_with_drivers: HashMap<u32, Addr<DriverConnection>>, // 0...N
-    // Posiciones de los demas drivers segun su id,
-    // cobra sentido si este driver es lider
+    /// Posiciones de los demas drivers segun su id,
+    /// cobra sentido si este driver es lider
     driver_positions: HashMap<u32, Position>,
-    // Id del driver lider
+    /// Id del driver lider
     leader_id: Option<u32>,
-    // Id del driver
+    /// Id del driver
     id: u32,
-    // Timeout de la eleccion
+    /// Timeout de la eleccion
     election_timeout: Option<SpawnHandle>,
 }
 
@@ -150,6 +154,15 @@ pub struct CanHandleTrip {
     pub passenger_id: u32,
     pub source: Position,
     pub destination: Position,
+    pub driver_id: u32,
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct CanHandleTripACK {
+    pub passenger_id: u32,
+    pub response: bool,
+    pub driver_id: u32,
 }
 
 #[derive(Message)]
@@ -165,18 +178,25 @@ pub struct SendTripResponse {
     pub detail: String,
     pub passenger_id: u32,
 }
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct RemoveDriverFinder {
+    /// Id del pasajero
+    pub passenger_id: u32,
+}
 ```
 
 ```Rust
 pub struct TripHandler {
-    // Direccion del actor CentralDriver
+    /// Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
-    // Posicion actual del driver
-    current_location: Arc<Mutex<Position>>,
-    // Id del pasajero actual
+    /// Posicion actual del driver
+    current_location: Option<Position>,
+    /// Id del pasajero actual
     passenger_id: Option<u32>,
-    // Tarea del viaje
-    trip_task: Option<SpawnHandle>,
+    // Variable de entorno 'TEST' para simplificar casos de interes a la hora de testear
+    test_env_var: Result<String, std::env::VarError>,
 }
 
 impl Actor for TripHandler {
@@ -185,18 +205,29 @@ impl Actor for TripHandler {
 
 #[derive(Message)]
 #[rtype(result = "()")]
-struct TripStart {
+struct GoTo {
+    /// Posicion actual del driver
+    current_position: Position,
+    /// Posicion destino siguiente
+    next_position: Position,
+    /// Id del pasajero
     passenger_id: u32,
+    /// Posicion inicial del pasajero
     passenger_location: Position,
+    /// Posicion destino del pasajero
     destination: Position,
 }
 
 #[derive(Message)]
-#[rtype(result = "bool")]
+#[rtype(result = "()")]
 pub struct CanHandleTrip {
+    /// Id del pasajero
     pub passenger_id: u32,
+    /// Posicion inicial del pasajero
     pub passenger_location: Position,
+    /// Posicion destino del pasajero
     pub destination: Position,
+    /// Id de este driver
     pub self_id: u32,
 }
 
@@ -210,15 +241,19 @@ pub struct ClearPassenger {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct ForceNotifyPosition {}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct NotifyPosition {}
 ```
 
 ```Rust
 pub struct PassengerConnection {
-    // Direccion del actor CentralDriver
+    /// Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
-    // Stream para enviar al passenger
-    passenger_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
-    // ID del pasajero
+    /// Stream para enviar al passenger
+    passenger_write_stream: Option<WriteHalf<TcpStream>>,
+    /// ID del pasajero
     passenger_id: u32,
 }
 
@@ -244,7 +279,7 @@ pub struct PaymentConnection {
     // Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
     // Stream para enviar al payment
-    payment_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
+    payment_write_stream: Option<WriteHalf<TcpStream>>,
 }
 
 impl Actor for PaymentConnection {
@@ -266,14 +301,12 @@ pub struct RecvAll {
 
 ```Rust
 pub struct DriverConnection {
-    // Direccion del actor CentralDriver
+    /// Direccion del actor CentralDriver
     central_driver: Addr<CentralDriver>,
-    // Stream para enviar al driver
-    driver_write_stream: Arc<Mutex<WriteHalf<TcpStream>>>,
-    // ID del driver
+    /// Stream para enviar al driver
+    driver_write_stream: Option<WriteHalf<TcpStream>>,
+    /// ID del driver
     driver_id: u32,
-    //Guarda el ack recibido para cada pasajero
-    responses: HashMap<u32, Option<bool>>,
 }
 
 impl Actor for DriverConnection {
@@ -291,11 +324,49 @@ pub struct SendAll {
 pub struct RecvAll {
     pub data: String,
 }
+```
+
+```rust
+pub struct DriverFinder {
+    /// Direccion del actor CentralDriver
+    central_driver: Addr<CentralDriver>,
+    /// Timeout para la recepcion de confirmacion de un driver
+    driver_ack_timeout: Option<SpawnHandle>,
+    /// Id del pasajero
+    passenger_id: Option<u32>,
+    /// Posicion inicial del pasajero
+    source: Position,
+    /// Posicion destino del pasajero
+    destination: Position,
+    /// Conductores cercanos a la posicion inicial del pasajero
+    nearby_drivers: VecDeque<u32>,
+}
+
+impl Actor for DriverFinder {
+    type Context = Context<Self>;
+}
 
 #[derive(Message)]
-#[rtype(result = "Option<bool>")]
-pub struct CheckACK {
-    pub passenger_id: u32,
+#[rtype(result = "()")]
+struct AskDrivers {
+    /// Id del conductor previamente consultado
+    previous_driver: Option<u32>,
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct DriverACK {
+    /// Id del conductor que envia el ACK
+    pub driver_id: u32,
+    /// Valor del ACK
+    pub response: bool,
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct NoDrivers {
+    /// Id del pasajero
+    passenger_id: u32,
 }
 ```
 
@@ -407,6 +478,7 @@ pub enum TripMessages {
         status: TripStatus,
         detail: String,
     },
+    Listening {},
 }
 ```
 
@@ -435,12 +507,14 @@ pub enum DriverMessages {
     },
     CanHandleTrip {
         passenger_id: u32,
+        driver_id: u32,
         passenger_location: Position,
         destination: Position,
     },
     CanHandleTripACK {
         response: bool,
         passenger_id: u32,
+        driver_id: u32,
     },
 }
 ```
@@ -451,9 +525,11 @@ pub enum DriverMessages {
 
 ![driver_threads](assets/driver_threads.png)
 
+![driver_finder](assets/driver_finder.png)
+
 Cada driver va a tener una tarea async 'listener' la cual va a ser responsable de handlear nuevas conexiones con drivers o pasajeros.
 En ambas conexiones, se espera que primero se identifiquen con su id y tipo ('P' (passenger) o 'D' (driver)), en caso de que sea un passenger, se esperara ademas la request del viaje, la cual se enviara al CentralDriver mediante el mensaje 'RedirectNewTrip'.
-En el CentralDriver, si el driver es el driver lider, se notifica el mensaje 'FindDriver' con el cual lanza una nueva tarea async en el contexto del actor encargada de buscar un conductor para el pasajero. En caso de que el driver no sea el lider, le reenvia la request al lider mediante un socket TCP.
+En el CentralDriver, si el driver es el driver lider, se notifica el mensaje 'FindDriver' con el cual crea un nuevo actor 'DriverFinder' y lo inicia, encargada de buscar un conductor para el pasajero. En caso de que el driver no sea el lider, le reenvia la request al lider mediante un socket TCP.
 
 # Cambios post diseño
 
@@ -478,9 +554,9 @@ En cuanto al pasajero, notamos que el flujo de la aplicacion era mas bien secuen
 Al momento de seleccionar un driver, no se elige directamente al que mas cerca esta. En orden ascendente de distancia al pasajero, se le consulta a cada driver uno por uno si tomara el viaje, en caso positivo, el driver se comunica con el pasajero
 y le avisa que esta en camino, en caso negativo, se le pregunta al proximo driver mas cercano.
 
-### Tarea de seleccion de driver
+### Actor de seleccion de driver
 
-Por los cambios anteriormente mencionados, se cambio la forma en la que se ejecuta la 'seleccion' (ya que no se elige, si no que se busca y consulta) del driver. Al llegar una request, se envia el mensaje "FindDriver" al CentralDriver, el cual, si es el lider (en caso contrario, ignorara el mensaje con un early return), lanzara una tarea async en el contexto del actor encargada de filtrar, ordenar y consultar a los drivers mas cercanos si quieren tomar el viaje.
+Por los cambios anteriormente mencionados, se cambio la forma en la que se ejecuta la 'seleccion' (ya que no se elige, si no que se busca y consulta) del driver. Al llegar una request, se envia el mensaje "FindDriver" al CentralDriver, el cual, si es el lider (en caso contrario, ignorara el mensaje con un early return), creara un actor 'DriverFinder' encargado de filtrar, ordenar y consultar a los drivers mas cercanos si quieren tomar el viaje.
 
 ### Envio de posicion del driver
 
@@ -501,7 +577,7 @@ Dados
 -   Passenger que quiere ir desde (3,3) -> (10, 10)
 
 El pasajero principalmente autoriza el pago con el servicio de Payment, al ser autorizado prosigue.
-Luego se conecta aleatoriamente con el driver 0, y le envia 'CommonMessages::Identification {id, type\_: 'P'}' y 'TripMessages::TripRequest {source: (3,3), destination: (10, 10)}'.
+Luego se conecta aleatoriamente con el driver 0, y le envia 'CommonMessages::Identification {id, type\_: 'P'}' y 'TripMessages::TripRequest {source: (3,3), destination: (10, 10)}' y 'Listening'.
 El driver 0 redirige la request al driver 3 (lider) y le responde al pasajero que su request fue entregada cerrando asi la conexion.
 El driver 3 lanza una tarea async la cual clona las posiciones de los drivers en ese instante, filtra los drivers mas cercanos, los ordena en orden de distancia ascendente y se queda con los ids ordenados. Luego va preguntando uno por uno si quieren tomar el viaje. En este caso, el mas cercano es el driver 1, el cual rechaza la solicitud, siguiendo por el driver 0 el cual acepta la solicitud, el driver 3 y el driver 2 estaban a una distancia mayor a MAX_DISTANCE.
 Entonces, el driver 0 se conecta con el pasajero avisandole que sera su chofer, le avisa cuando esta cerca y cuando se llega a destino.

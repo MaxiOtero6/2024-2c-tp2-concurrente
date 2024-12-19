@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::position::Position;
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum TripStatus {
     RequestDelivered,
     Info,
@@ -15,7 +15,7 @@ pub enum CommonMessages {
     Identification { id: u32, type_: char },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum TripMessages {
     TripRequest {
         source: Position,
@@ -25,6 +25,7 @@ pub enum TripMessages {
         status: TripStatus,
         detail: String,
     },
+    Listening {},
 }
 
 #[derive(Deserialize, Serialize)]
